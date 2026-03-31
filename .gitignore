@@ -3,3 +3,19 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# Rust
+/target/
+Cargo.lock
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets (belt-and-suspenders — config.toml should never contain secrets)
+*.key
+*.pem
+.env
