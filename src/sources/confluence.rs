@@ -98,67 +98,183 @@ impl Source for ConfluenceSource {
     }
 }
 
-/// Convert Confluence storage format (HTML-like) to plain markdown.
-/// This is a best-effort conversion for common elements.
+/// Convert Confluence storage format (XHTML) to plain markdown.
+///
+/// Strategy (two-pass):
+/// 1. Pre-process: replace Confluence code macros (which contain CDATA) with
+///    fenced markdown code blocks; strip all remaining `<ac:...>` tags.
+/// 2. Walk the resulting HTML char-by-char converting standard HTML elements.
 fn html_to_markdown(title: &str, html: &str) -> String {
-    let mut md = format!("# {title}\n\n");
+    // Pass 1 – handle Confluence-specific constructs
+    let preprocessed = preprocess_confluence(html);
 
-    // Strip XML/HTML tags with a simple approach - good enough for display
+    // Pass 2 – convert standard HTML
+    let raw_md = html_walk(&preprocessed);
+
+    // Pass 3 – clean up whitespace
+    let cleaned = post_process(&raw_md);
+
+    format!("# {title}\n\n{}", cleaned.trim())
+}
+
+/// Pre-process Confluence storage XML:
+/// - Extract `<ac:structured-macro ac:name="code">` blocks → fenced code
+/// - Strip all remaining `<ac:...>` and `<ri:...>` tags (and their content for
+///   known noise-only macros like `toc`)
+fn preprocess_confluence(html: &str) -> String {
+    let mut out = String::new();
+    let mut remaining = html;
+
+    while !remaining.is_empty() {
+        // Look for an ac:structured-macro opening tag
+        if let Some(macro_pos) = remaining.find("<ac:structured-macro") {
+            // Emit everything before the macro tag as-is (will be walked later)
+            out.push_str(&remaining[..macro_pos]);
+            remaining = &remaining[macro_pos..];
+
+            // Find where the opening tag ends (could be self-closing or have body)
+            let tag_close = remaining.find('>').unwrap_or(remaining.len() - 1);
+            let opening_tag = &remaining[..=tag_close];
+
+            // Is it a code macro?
+            let is_code = opening_tag.contains("ac:name=\"code\"");
+
+            if opening_tag.ends_with("/>") {
+                // Self-closing — no body, skip it
+                remaining = &remaining[tag_close + 1..];
+                continue;
+            }
+
+            // Find the matching </ac:structured-macro>
+            let end_marker = "</ac:structured-macro>";
+            let body_start = tag_close + 1;
+            if let Some(end_pos) = remaining[body_start..].find(end_marker) {
+                let macro_body = &remaining[body_start..body_start + end_pos];
+                remaining = &remaining[body_start + end_pos + end_marker.len()..];
+
+                if is_code {
+                    // Extract CDATA content from ac:plain-text-body
+                    let code = extract_cdata(macro_body);
+                    out.push_str("\n\n```\n");
+                    out.push_str(code.trim_matches('\n'));
+                    out.push_str("\n```\n\n");
+                }
+                // Non-code macros (toc etc.) are silently dropped
+            } else {
+                // No closing tag found — skip rest
+                break;
+            }
+        } else {
+            // No more macros — emit the rest
+            out.push_str(remaining);
+            break;
+        }
+    }
+
+    // Strip all remaining ac:/ri: tags (leave their text children if any)
+    strip_ac_tags(&out)
+}
+
+/// Extract the content inside <![CDATA[...]]> within the given string.
+fn extract_cdata(s: &str) -> &str {
+    if let Some(start) = s.find("<![CDATA[") {
+        let content_start = start + 9; // len("<![CDATA[")
+        if let Some(end) = s[content_start..].find("]]>") {
+            return &s[content_start..content_start + end];
+        }
+    }
+    s
+}
+
+/// Strip tags whose name starts with "ac:" or "ri:" (Confluence/Atlassian
+/// custom elements). Their text content is preserved; attributes are dropped.
+fn strip_ac_tags(html: &str) -> String {
+    let mut out = String::new();
+    let mut remaining = html;
+
+    while !remaining.is_empty() {
+        if let Some(open) = remaining.find('<') {
+            out.push_str(&remaining[..open]);
+            remaining = &remaining[open..];
+
+            // Read tag name
+            let tag_name_start = if remaining.starts_with("</") { 2 } else { 1 };
+            let tag_name_end = remaining[tag_name_start..]
+                .find(|c: char| c == '>' || c == ' ' || c == '/')
+                .map(|p| tag_name_start + p)
+                .unwrap_or(remaining.len());
+            let tag_name = &remaining[tag_name_start..tag_name_end];
+
+            if tag_name.starts_with("ac:") || tag_name.starts_with("ri:") {
+                // Skip the entire tag (up to closing >)
+                if let Some(close) = remaining.find('>') {
+                    remaining = &remaining[close + 1..];
+                } else {
+                    break;
+                }
+            } else {
+                // Normal tag — keep the '<' and continue
+                out.push('<');
+                remaining = &remaining[1..];
+            }
+        } else {
+            out.push_str(remaining);
+            break;
+        }
+    }
+
+    out
+}
+
+/// Walk standard HTML and emit markdown equivalents.
+fn html_walk(html: &str) -> String {
     let mut result = String::new();
-    let mut in_tag = false;
-    let mut _in_code = false;
     let chars: Vec<char> = html.chars().collect();
     let mut i = 0;
+    let mut in_tag = false;
 
     while i < chars.len() {
         match chars[i] {
             '<' => {
                 in_tag = true;
-                // Peek at tag name for structural elements
                 let tag_start = i + 1;
                 let tag_end = chars[tag_start..]
                     .iter()
-                    .position(|&c| c == '>' || c == ' ')
+                    .position(|&c| c == '>' || c == ' ' || c == '/')
                     .map(|p| tag_start + p)
                     .unwrap_or(chars.len());
-                let tag_name: String = chars[tag_start..tag_end]
-                    .iter()
-                    .collect::<String>()
-                    .to_lowercase();
+                let tag_name_raw: String = chars[tag_start..tag_end].iter().collect();
+                let tag_name = tag_name_raw.to_lowercase();
+                let is_closing = tag_name.starts_with('/');
+                let base = tag_name.trim_start_matches('/');
 
-                match tag_name.trim_start_matches('/') {
-                    "h1" => { if !tag_name.starts_with('/') { result.push_str("\n# "); } else { result.push('\n'); } }
-                    "h2" => { if !tag_name.starts_with('/') { result.push_str("\n## "); } else { result.push('\n'); } }
-                    "h3" => { if !tag_name.starts_with('/') { result.push_str("\n### "); } else { result.push('\n'); } }
-                    "h4" | "h5" | "h6" => { if !tag_name.starts_with('/') { result.push_str("\n#### "); } else { result.push('\n'); } }
-                    "p" => { if tag_name.starts_with('/') { result.push_str("\n\n"); } }
+                match base {
+                    "h1" => { if !is_closing { result.push_str("\n\n# "); } else { result.push('\n'); } }
+                    "h2" => { if !is_closing { result.push_str("\n\n## "); } else { result.push('\n'); } }
+                    "h3" => { if !is_closing { result.push_str("\n\n### "); } else { result.push('\n'); } }
+                    "h4" | "h5" | "h6" => { if !is_closing { result.push_str("\n\n#### "); } else { result.push('\n'); } }
+                    "p" => { if is_closing { result.push_str("\n\n"); } }
                     "br" => result.push('\n'),
-                    "li" => { if !tag_name.starts_with('/') { result.push_str("\n- "); } }
-                    "code" => {
-                        if !tag_name.starts_with('/') { result.push('`'); _in_code = true; }
-                        else { result.push('`'); _in_code = false; }
-                    }
+                    "ul" | "ol" => { if is_closing { result.push('\n'); } }
+                    "li" => { if !is_closing { result.push_str("\n- "); } }
+                    "code" => result.push('`'),
                     "pre" => {
-                        result.push_str("\n```\n");
+                        if !is_closing { result.push_str("\n\n```\n"); }
+                        else { result.push_str("\n```\n\n"); }
                     }
-                    "strong" | "b" => { result.push_str("**"); }
-                    "em" | "i" => { result.push('*'); }
+                    "strong" | "b" => result.push_str("**"),
+                    "em" | "i" => result.push('*'),
                     _ => {}
                 }
                 i = tag_end;
             }
-            '>' if in_tag => {
-                in_tag = false;
-            }
-            '&' => {
-                // Basic HTML entity decoding
-                let rest: String = chars[i..].iter().take(7).collect();
-                if rest.starts_with("&amp;") { result.push('&'); i += 4; }
-                else if rest.starts_with("&lt;") { result.push('<'); i += 3; }
-                else if rest.starts_with("&gt;") { result.push('>'); i += 3; }
-                else if rest.starts_with("&nbsp;") { result.push(' '); i += 5; }
-                else if rest.starts_with("&quot;") { result.push('"'); i += 5; }
-                else { result.push(chars[i]); }
+            '>' if in_tag => { in_tag = false; }
+            '&' if !in_tag => {
+                // Decode named HTML entities (including curly quotes from Confluence)
+                let rest: String = chars[i..].iter().take(9).collect();
+                let (ch, skip) = decode_entity(&rest);
+                result.push(ch);
+                i += skip;
             }
             c if !in_tag => result.push(c),
             _ => {}
@@ -166,6 +282,90 @@ fn html_to_markdown(title: &str, html: &str) -> String {
         i += 1;
     }
 
-    md.push_str(&result);
-    md
+    result
+}
+
+/// Decode a single HTML entity at the start of `s`. Returns (char, bytes_consumed - 1)
+/// so the caller can do `i += skip` before the usual `i += 1`.
+fn decode_entity(s: &str) -> (char, usize) {
+    // Named entities — extend as needed
+    let entities: &[(&str, char)] = &[
+        ("&amp;",   '&'),
+        ("&lt;",    '<'),
+        ("&gt;",    '>'),
+        ("&nbsp;",  ' '),
+        ("&quot;",  '"'),
+        ("&apos;",  '\''),
+        ("&ldquo;", '"'),
+        ("&rdquo;", '"'),
+        ("&lsquo;", '\''),
+        ("&rsquo;", '\''),
+        ("&ndash;", '–'),
+        ("&mdash;", '—'),
+        ("&hellip;",'…'),
+    ];
+    for &(entity, ch) in entities {
+        if s.starts_with(entity) {
+            return (ch, entity.len() - 1);
+        }
+    }
+    // Numeric entity &#NNN; or &#xHH;
+    if s.starts_with("&#") {
+        if let Some(semi) = s.find(';') {
+            let inner = &s[2..semi];
+            let code_point = if inner.starts_with('x') || inner.starts_with('X') {
+                u32::from_str_radix(&inner[1..], 16).ok()
+            } else {
+                inner.parse::<u32>().ok()
+            };
+            if let Some(cp) = code_point.and_then(char::from_u32) {
+                return (cp, semi);
+            }
+        }
+    }
+    ('&', 0)
+}
+
+/// Post-process: collapse excess blank lines, drop empty heading lines.
+fn post_process(md: &str) -> String {
+    let mut out = String::new();
+    let mut blank_count = 0usize;
+    let mut in_fence = false;
+
+    for line in md.lines() {
+        let trimmed = line.trim();
+
+        // Track fenced code blocks — don't modify their content
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            out.push_str(line);
+            out.push('\n');
+            blank_count = 0;
+            continue;
+        }
+
+        if in_fence {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // Drop heading lines with no text after the hashes
+        if matches!(trimmed, "#" | "##" | "###" | "####") {
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            blank_count += 1;
+            if blank_count <= 1 {
+                out.push('\n');
+            }
+        } else {
+            blank_count = 0;
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+    }
+
+    out
 }
