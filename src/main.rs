@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use reqwest;
 
 mod cache;
 mod config;
@@ -50,6 +51,21 @@ enum Command {
     },
     /// Start the MCP stdio server for AI agent use
     Mcp,
+    /// Save a local markdown file or URL as an inline doc
+    Add {
+        /// Short unique alias (kebab-case, e.g. "fastify-plugins")
+        #[arg(long)]
+        alias: String,
+        /// Path to a local markdown file to save
+        #[arg(long, conflicts_with = "url")]
+        file: Option<String>,
+        /// URL to fetch and save as markdown
+        #[arg(long, conflicts_with = "file")]
+        url: Option<String>,
+        /// Comma-separated tags (inferred from headings if omitted)
+        #[arg(long)]
+        tags: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -74,16 +90,24 @@ enum CacheAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::WARN.into()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-
     let cli = Cli::parse();
     let cfg = config::Config::load()?;
+
+    // Only enable logging for non-TUI commands — tracing output to stderr
+    // corrupts the alternate screen used by the TUI.
+    let is_tui = matches!(
+        cli.command,
+        None | Some(Command::Browse) | Some(Command::Read { .. })
+    );
+    if !is_tui {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(tracing::Level::WARN.into()),
+            )
+            .with_writer(std::io::stderr)
+            .init();
+    }
 
     match cli.command.unwrap_or(Command::Browse) {
         Command::Browse => tui::run(cfg).await?,
@@ -139,7 +163,72 @@ async fn main() -> Result<()> {
         Command::Mcp => {
             mcp::serve(cfg).await?;
         }
+        Command::Add { alias, file, url, tags } => {
+            let tags_vec: Vec<String> = tags
+                .unwrap_or_default()
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+
+            let content = if let Some(path) = file {
+                std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))?
+            } else if let Some(ref u) = url {
+                fetch_url(u).await?
+            } else {
+                anyhow::bail!("Provide either --file <path> or --url <url>");
+            };
+
+            let final_tags = if tags_vec.is_empty() {
+                mcp::infer_tags_pub(&content)
+            } else {
+                tags_vec
+            };
+
+            config::Config::add_inline_doc(&alias, &content, final_tags.clone())?;
+            println!(
+                "Saved '{}' with tags: {}",
+                alias,
+                if final_tags.is_empty() { "(none)".to_string() } else { final_tags.join(", ") }
+            );
+        }
     }
 
     Ok(())
+}
+
+/// Fetch a URL and return its content as markdown (best-effort).
+async fn fetch_url(url: &str) -> anyhow::Result<String> {
+    let client = reqwest::Client::builder()
+        .user_agent("tome/0.1")
+        .build()?;
+    let resp = client.get(url).send().await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch '{url}': {e}"))?;
+    if !resp.status().is_success() {
+        anyhow::bail!("HTTP {} fetching '{url}'", resp.status());
+    }
+    let text = resp.text().await?;
+    // If it looks like HTML, strip tags naively; otherwise return as-is
+    if text.trim_start().starts_with('<') {
+        Ok(strip_html(&text))
+    } else {
+        Ok(text)
+    }
+}
+
+/// Very light HTML stripper for `tome add --url` (not Confluence storage format).
+fn strip_html(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    // Collapse whitespace runs
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }

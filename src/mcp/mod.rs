@@ -38,6 +38,16 @@ pub struct SearchParams {
     pub query: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AddParams {
+    /// Short unique alias for the doc, e.g. "fastify-plugins" (kebab-case, no spaces)
+    pub alias: String,
+    /// Full markdown content of the document
+    pub content: String,
+    /// Tags for filtering and search. If omitted, tags are inferred from headings.
+    pub tags: Option<Vec<String>>,
+}
+
 #[tool_router]
 impl TomeServer {
     #[allow(clippy::new_without_default)]
@@ -100,6 +110,36 @@ impl TomeServer {
             Err(e) => format!("Search error: {e}"),
         }
     }
+
+    /// Save a markdown document to tome with an alias and tags.
+    /// Use this when the user shares a URL with useful reference documentation.
+    /// Tags are inferred from headings if not provided.
+    /// Returns an error if the alias already exists.
+    #[tool(description = "Save a markdown document to tome so it can be retrieved later by alias. \
+        Use when the user shares a URL containing useful reference docs (API docs, guides, runbooks, specs). \
+        Tags are inferred from headings if omitted. Errors if alias already exists.")]
+    async fn tome_add(&self, Parameters(params): Parameters<AddParams>) -> String {
+        let alias = params.alias.trim().to_string();
+
+        // Validate alias: kebab-case, no spaces
+        if alias.is_empty() || alias.contains(' ') {
+            return "Error: alias must be non-empty and contain no spaces (use kebab-case, e.g. 'fastify-plugins')".to_string();
+        }
+
+        let tags = match params.tags {
+            Some(t) if !t.is_empty() => t,
+            _ => infer_tags(&params.content),
+        };
+
+        match Config::add_inline_doc(&alias, &params.content, tags.clone()) {
+            Ok(()) => format!(
+                "Saved '{}' to tome with tags: {}",
+                alias,
+                if tags.is_empty() { "(none)".to_string() } else { tags.join(", ") }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
 }
 
 #[tool_handler]
@@ -109,7 +149,7 @@ impl ServerHandler for TomeServer {
             .with_instructions(
                 "tome gives you access to internal documentation. \
                  Use tome_list to see available docs, tome_get to fetch a doc by alias, \
-                 and tome_search to find relevant docs.",
+                 tome_search to find relevant docs, and tome_add to save new docs.",
             )
     }
 }
@@ -120,4 +160,45 @@ pub async fn serve(cfg: Config) -> Result<()> {
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
+}
+
+/// Infer tags from markdown headings (H1/H2), slugified and capped at 5.
+/// Exposed as pub for use by the CLI `tome add` command.
+pub fn infer_tags_pub(content: &str) -> Vec<String> {
+    infer_tags(content)
+}
+
+/// Infer tags from markdown headings (H1/H2), slugified and capped at 5.
+fn infer_tags(content: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        let heading = if line.starts_with("## ") {
+            &line[3..]
+        } else if line.starts_with("# ") {
+            &line[2..]
+        } else {
+            continue;
+        };
+        let slug = slugify(heading);
+        if !slug.is_empty() && !tags.contains(&slug) {
+            tags.push(slug);
+        }
+        if tags.len() >= 5 {
+            break;
+        }
+    }
+    tags
+}
+
+/// Convert a heading string to a kebab-case tag slug.
+fn slugify(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
+        .collect::<String>()
+        .split_whitespace()
+        .map(|w| w.to_lowercase())
+        .filter(|w| !w.is_empty() && w.len() > 1)  // drop single-char words
+        .collect::<Vec<_>>()
+        .join("-")
 }

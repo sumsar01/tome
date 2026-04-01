@@ -2,7 +2,7 @@ pub mod confluence;
 pub mod github;
 pub mod local;
 
-use anyhow::{Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
@@ -52,6 +52,13 @@ pub async fn fetch(cfg: &Config, alias: &str, use_cache: bool) -> Result<String>
 async fn fetch_live(cfg: &Config, doc: &crate::config::DocConfig) -> Result<String> {
     let source_name = &doc.source;
 
+    // Inline docs saved by `tome add` / `tome_add` MCP tool
+    if source_name == "inline" {
+        let path = crate::config::inline_path(&doc.alias);
+        return std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read inline doc '{}' at {}", doc.alias, path.display()));
+    }
+
     // Special case: inline local path (source = "local" with no named source config)
     if source_name == "local" && cfg.find_source("local").is_none() {
         let path = doc
@@ -98,6 +105,10 @@ async fn fetch_live(cfg: &Config, doc: &crate::config::DocConfig) -> Result<Stri
                 .or(doc.path.as_deref())
                 .ok_or_else(|| anyhow::anyhow!("Confluence doc '{}' needs 'page_id' or 'path'", doc.alias))?;
             src.fetch_content(path).await
+        }
+        // Inline is handled above before source lookup; this arm is unreachable
+        crate::config::SourceKind::Inline => {
+            anyhow::bail!("Inline doc '{}' should not reach source dispatch", doc.alias)
         }
     }
 }
