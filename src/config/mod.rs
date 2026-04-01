@@ -4,15 +4,18 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Top-level config loaded from ~/.config/tome/config.toml
+/// Top-level config loaded from the platform config file.
+/// Contains only sources and cache settings.
+/// Doc registrations live in the SQLite database (`tome.db`).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
     #[serde(default)]
-    pub docs: Vec<DocConfig>,
-    #[serde(default)]
     pub cache: CacheConfig,
+    /// Legacy [[docs]] entries — read during migration only, then removed from disk.
+    #[serde(default, skip_serializing)]
+    pub docs: Vec<DocConfig>,
 }
 
 /// A named source (GitHub repo, Confluence space, local directory)
@@ -44,21 +47,17 @@ pub enum SourceKind {
     Github,
     Confluence,
     Local,
+    /// Legacy — kept for migration compatibility; no longer written to config.
     Inline,
 }
 
-/// A single registered doc with an alias
+/// Legacy doc config entry — only used during migration from config.toml → DB.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DocConfig {
-    /// Short name used on the CLI: `tome get kubernetes`
     pub alias: String,
-    /// Matches a [[sources]] name, or "local" for inline local paths
     pub source: String,
-    /// Confluence page ID, GitHub file path, or local file path
     pub path: Option<String>,
-    /// Confluence page ID (alternative to path for confluence sources)
     pub page_id: Option<String>,
-    /// Optional tags for filtering/search
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -88,15 +87,11 @@ fn default_ttl() -> u64 {
     3600
 }
 
-/// Flat view of a doc used for listing
-pub struct DocInfo {
-    pub alias: String,
-    pub source: String,
-    pub tags: Vec<String>,
-}
-
 impl Config {
-    /// Load config from ~/.config/tome/config.toml, creating it if missing.
+    /// Load config from the platform config path, creating it if missing.
+    ///
+    /// If legacy `[[docs]]` entries are found and no `tome.db` exists yet,
+    /// they are migrated automatically and removed from config.toml.
     pub fn load() -> Result<Self> {
         let path = config_path();
         if !path.exists() {
@@ -113,13 +108,10 @@ impl Config {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config: {}", path.display()))?;
 
-        toml::from_str(&content)
-            .with_context(|| format!("Failed to parse config: {}", path.display()))
-    }
+        let cfg: Config = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse config: {}", path.display()))?;
 
-    /// Find a doc config by alias.
-    pub fn find_doc(&self, alias: &str) -> Option<&DocConfig> {
-        self.docs.iter().find(|d| d.alias == alias)
+        Ok(cfg)
     }
 
     /// Find a source config by name.
@@ -127,59 +119,107 @@ impl Config {
         self.sources.iter().find(|s| s.name == name)
     }
 
-    /// Check whether an alias already exists in the config.
-    pub fn alias_exists(&self, alias: &str) -> bool {
-        self.docs.iter().any(|d| d.alias == alias)
-    }
-
-    /// Save an inline doc: write content to disk and append to config.toml.
-    /// Returns an error if the alias already exists.
-    pub fn add_inline_doc(alias: &str, content: &str, tags: Vec<String>) -> Result<()> {
-        // Load current config to check for duplicates
-        let cfg = Self::load()?;
-        if cfg.alias_exists(alias) {
-            anyhow::bail!(
-                "alias '{alias}' already exists in tome. \
-                 Use a different alias or remove the existing entry from config.toml first."
-            );
+    /// Migrate legacy [[docs]] entries from config.toml into the DB.
+    ///
+    /// Called once by `main` after opening the DB. No-op if `docs` is empty.
+    /// After migration, rewrites config.toml without the [[docs]] blocks.
+    pub fn migrate_docs_to_db(&self, db: &crate::db::Db) -> Result<()> {
+        if self.docs.is_empty() {
+            return Ok(());
         }
 
-        // Write content file
-        let dir = inline_dir();
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create inline dir: {}", dir.display()))?;
-        let file_path = inline_path(alias);
-        std::fs::write(&file_path, content)
-            .with_context(|| format!("Failed to write inline doc: {}", file_path.display()))?;
+        let db_path = crate::db::db_path();
+        // Only auto-migrate if the DB is fresh (no existing docs table data).
+        // This prevents re-migrating on every load if the user manually added
+        // [[docs]] entries back to config.toml.
+        let existing_count: usize = db.list_docs(None)?.len();
+        if existing_count > 0 {
+            // DB already has data — skip migration to avoid duplicates.
+            return Ok(());
+        }
 
-        // Append [[docs]] block to config.toml
-        let toml_block = format!(
-            "\n[[docs]]\nalias = \"{alias}\"\nsource = \"inline\"\ntags = [{}]\n",
-            tags.iter()
-                .map(|t| format!("\"{t}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
+        eprintln!(
+            "tome: migrating {} doc entries from config.toml → {}",
+            self.docs.len(),
+            db_path.display()
         );
-        let config_file = config_path();
-        let mut current = std::fs::read_to_string(&config_file)
-            .with_context(|| format!("Failed to read config: {}", config_file.display()))?;
-        current.push_str(&toml_block);
-        std::fs::write(&config_file, &current)
-            .with_context(|| format!("Failed to write config: {}", config_file.display()))?;
 
+        for doc in &self.docs {
+            let content = if doc.source == "inline" {
+                // Read content from the old .md file location
+                let md_path = legacy_inline_path(&doc.alias);
+                match std::fs::read_to_string(&md_path) {
+                    Ok(c) => Some(c),
+                    Err(_) => {
+                        eprintln!(
+                            "tome: warning: inline doc '{}' has no content file at {} — migrating metadata only",
+                            doc.alias,
+                            md_path.display()
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let record = crate::db::DocRecord {
+                alias: doc.alias.clone(),
+                source: doc.source.clone(),
+                page_id: doc.page_id.clone(),
+                path: doc.path.clone(),
+                tags: doc.tags.clone(),
+                content,
+            };
+
+            match db.add_doc(&record) {
+                Ok(()) => {}
+                Err(e) if e.to_string().contains("already exists") => {
+                    // Already in DB — skip silently
+                }
+                Err(e) => {
+                    eprintln!("tome: warning: failed to migrate '{}': {e}", doc.alias);
+                }
+            }
+        }
+
+        // Rewrite config.toml without [[docs]] blocks
+        self.rewrite_config_without_docs()
+            .context("Failed to rewrite config.toml after migration")?;
+
+        // Clean up old .md files for inline docs
+        for doc in &self.docs {
+            if doc.source == "inline" {
+                let md_path = legacy_inline_path(&doc.alias);
+                let _ = std::fs::remove_file(&md_path); // best-effort
+            }
+        }
+
+        eprintln!("tome: migration complete. config.toml cleaned up.");
         Ok(())
     }
 
-    /// Flat list of all docs for the `list` command.
-    pub fn list_docs(&self) -> Vec<DocInfo> {
-        self.docs
-            .iter()
-            .map(|d| DocInfo {
-                alias: d.alias.clone(),
-                source: d.source.clone(),
-                tags: d.tags.clone(),
-            })
-            .collect()
+    /// Rewrite config.toml, serialising only sources and cache (no docs).
+    fn rewrite_config_without_docs(&self) -> Result<()> {
+        // Build a clean serialisable version without docs
+        #[derive(Serialize)]
+        struct CleanConfig<'a> {
+            cache: &'a CacheConfig,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            sources: &'a Vec<SourceConfig>,
+        }
+
+        let clean = CleanConfig {
+            cache: &self.cache,
+            sources: &self.sources,
+        };
+
+        let header = "# tome configuration\n# Docs registry has moved to tome.db\n# Sources and cache settings only.\n\n";
+        let body = toml::to_string_pretty(&clean).context("Failed to serialise config")?;
+        let path = config_path();
+        std::fs::write(&path, format!("{header}{body}"))
+            .with_context(|| format!("Failed to write config: {}", path.display()))?;
+        Ok(())
     }
 }
 
@@ -190,17 +230,13 @@ pub fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// Directory where inline (agent-saved) docs are stored.
-pub fn inline_dir() -> PathBuf {
+/// Legacy path for inline .md files — used only during migration.
+pub fn legacy_inline_path(alias: &str) -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("tome")
         .join("local")
-}
-
-/// Path to the inline doc file for a given alias.
-pub fn inline_path(alias: &str) -> PathBuf {
-    inline_dir().join(format!("{alias}.md"))
+        .join(format!("{alias}.md"))
 }
 
 const DEFAULT_CONFIG: &str = r#"# tome configuration
@@ -212,7 +248,7 @@ enabled = true
 ttl_seconds = 3600  # 1 hour
 
 # --- Sources ---
-# Define named sources to reference in [[docs]] entries.
+# Define named sources to reference when adding docs.
 # Tokens are stored in your OS keychain via `tome auth`, never here.
 
 # Example GitHub source:
@@ -235,28 +271,4 @@ ttl_seconds = 3600  # 1 hour
 # name = "my-notes"
 # type = "local"
 # root = "/Users/you/docs/"
-
-# --- Docs ---
-# Register individual docs with short aliases.
-
-# Example GitHub doc:
-# [[docs]]
-# alias = "migration-guide"
-# source = "infra-docs"
-# path = "docs/migration.md"
-# tags = ["migration", "infra"]
-
-# Example Confluence doc:
-# [[docs]]
-# alias = "kubernetes"
-# source = "confluence"
-# page_id = "123456"
-# tags = ["infra", "k8s"]
-
-# Example local doc:
-# [[docs]]
-# alias = "runbook"
-# source = "my-notes"
-# path = "runbook.md"
-# tags = ["ops"]
 "#;

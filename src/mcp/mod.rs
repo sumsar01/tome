@@ -13,10 +13,12 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::db::{Db, DocRecord};
 use crate::sources;
 
 pub struct TomeServer {
     cfg: Arc<Config>,
+    db: Arc<Db>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -51,9 +53,10 @@ pub struct AddParams {
 #[tool_router]
 impl TomeServer {
     #[allow(clippy::new_without_default)]
-    pub fn new(cfg: Config) -> Self {
+    pub fn new(cfg: Config, db: Db) -> Self {
         Self {
             cfg: Arc::new(cfg),
+            db: Arc::new(db),
             tool_router: Self::tool_router(),
         }
     }
@@ -61,21 +64,17 @@ impl TomeServer {
     /// List all available documentation aliases registered in tome.
     #[tool(description = "List all available documentation aliases registered in tome. Returns alias, source, and tags for each doc.")]
     async fn tome_list(&self, Parameters(params): Parameters<ListParams>) -> String {
-        let docs = self.cfg.list_docs();
-        let filtered: Vec<_> = match &params.tag {
-            Some(t) => docs
-                .iter()
-                .filter(|d| d.tags.iter().any(|dt| dt.contains(t.as_str())))
-                .collect(),
-            None => docs.iter().collect(),
+        let docs = match self.db.list_docs(params.tag.as_deref()) {
+            Ok(d) => d,
+            Err(e) => return format!("Error listing docs: {e}"),
         };
 
-        if filtered.is_empty() {
+        if docs.is_empty() {
             return "No docs found.".to_string();
         }
 
         let mut out = String::from("Available docs:\n\n");
-        for doc in filtered {
+        for doc in &docs {
             out.push_str(&format!(
                 "- **{}** (source: {}) tags: {}\n",
                 doc.alias,
@@ -89,7 +88,7 @@ impl TomeServer {
     /// Fetch the full content of a documentation page by its alias.
     #[tool(description = "Fetch the full content of a documentation page by its alias. Returns markdown content.")]
     async fn tome_get(&self, Parameters(params): Parameters<GetParams>) -> String {
-        match sources::fetch(&self.cfg, &params.alias, true).await {
+        match sources::fetch(&self.cfg, &self.db, &params.alias, true).await {
             Ok(content) => content,
             Err(e) => format!("Error fetching '{}': {e}", params.alias),
         }
@@ -98,7 +97,7 @@ impl TomeServer {
     /// Search for documentation by keyword across aliases and tags.
     #[tool(description = "Search for documentation by keyword. Searches across doc aliases and tags, returns ranked results.")]
     async fn tome_search(&self, Parameters(params): Parameters<SearchParams>) -> String {
-        match sources::search(&self.cfg, &params.query).await {
+        match sources::search(&self.cfg, &self.db, &params.query).await {
             Ok(results) if results.is_empty() => format!("No results for '{}'", params.query),
             Ok(results) => {
                 let mut out = format!("Search results for '{}':\n\n", params.query);
@@ -131,7 +130,16 @@ impl TomeServer {
             _ => infer_tags(&params.content),
         };
 
-        match Config::add_inline_doc(&alias, &params.content, tags.clone()) {
+        let record = DocRecord {
+            alias: alias.clone(),
+            source: "inline".to_string(),
+            page_id: None,
+            path: None,
+            tags: tags.clone(),
+            content: Some(params.content),
+        };
+
+        match self.db.add_doc(&record) {
             Ok(()) => format!(
                 "Saved '{}' to tome with tags: {}",
                 alias,
@@ -155,8 +163,8 @@ impl ServerHandler for TomeServer {
 }
 
 /// Start the MCP stdio server.
-pub async fn serve(cfg: Config) -> Result<()> {
-    let server = TomeServer::new(cfg);
+pub async fn serve(cfg: Config, db: Db) -> Result<()> {
+    let server = TomeServer::new(cfg, db);
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())

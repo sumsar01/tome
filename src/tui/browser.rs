@@ -4,7 +4,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
 };
 
@@ -14,27 +14,46 @@ pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(5),
             Constraint::Min(3),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
         .split(f.area());
 
+    // Logo header — owl mascot
+    let owl = Style::default().fg(Color::Magenta);
+    let title = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let logo = Paragraph::new(Text::from(vec![
+        Line::from(vec![Span::styled("    ,___,", owl)]),
+        Line::from(vec![
+            Span::styled("   (o,o)", owl),
+            Span::raw("    "),
+            Span::styled("t o m e", title),
+        ]),
+        Line::from(vec![
+            Span::styled("   {`\"'}", owl),
+            Span::raw("    "),
+            Span::styled("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}", dim),
+        ]),
+        Line::from(vec![
+            Span::styled("   -\"-\"-", owl),
+            Span::raw("    "),
+            Span::styled("docs for humans & AI", dim),
+        ]),
+        Line::from(vec![]),
+    ]));
+    f.render_widget(logo, chunks[0]);
+
     // Doc list
     let aliases = app.filtered_aliases();
     let items: Vec<ListItem> = aliases
         .iter()
         .map(|a| {
-            let source = app
-                .cfg
-                .find_doc(a)
-                .map(|d| d.source.as_str())
-                .unwrap_or("?");
-            let tags = app
-                .cfg
-                .find_doc(a)
-                .map(|d| d.tags.join(", "))
-                .unwrap_or_default();
+            let doc = app.db.find_doc(a).ok().flatten();
+            let source = doc.as_ref().map(|d| d.source.clone()).unwrap_or_else(|| "?".to_string());
+            let tags = doc.as_ref().map(|d| d.tags.join(", ")).unwrap_or_default();
 
             let line = Line::from(vec![
                 Span::styled(*a, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
@@ -61,7 +80,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black).add_modifier(Modifier::BOLD))
         .highlight_symbol(" > ");
 
-    f.render_stateful_widget(list, chunks[0], &mut list_state);
+    f.render_stateful_widget(list, chunks[1], &mut list_state);
 
     // Filter bar
     let filter_text = if app.filtering {
@@ -74,7 +93,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let filter_bar = Paragraph::new(filter_text)
         .style(Style::default().fg(Color::Yellow));
-    f.render_widget(filter_bar, chunks[1]);
+    f.render_widget(filter_bar, chunks[2]);
 
     // Status / help bar
     let help = if app.status.is_empty() {
@@ -84,7 +103,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     };
     let status = Paragraph::new(help)
         .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(status, chunks[2]);
+    f.render_widget(status, chunks[3]);
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {

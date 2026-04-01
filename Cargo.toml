@@ -27,14 +27,14 @@ toml = "0.8"
 
 # Config / secrets
 dirs = "5"
-keyring = "3"
+keyring = { version = "3", features = ["apple-native"] }
 
 # TUI
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
 
 # Markdown rendering
-termimad = "0.30"
+pulldown-cmark = "0.13"
 
 # File system
 walkdir = "2"
@@ -42,6 +42,9 @@ notify = "6"
 
 # Search
 fuzzy-matcher = "0.3"
+
+# Database (doc registry + FTS5 full-text search)
+rusqlite = { version = "0.39", features = ["bundled"] }
 
 # Clipboard
 arboard = "3"

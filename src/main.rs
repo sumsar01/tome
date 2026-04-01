@@ -4,6 +4,7 @@ use reqwest;
 
 mod cache;
 mod config;
+mod db;
 mod mcp;
 mod sources;
 mod tui;
@@ -109,17 +110,21 @@ async fn main() -> Result<()> {
             .init();
     }
 
+    // Open the database and migrate any legacy config.toml [[docs]] entries.
+    let db = db::Db::open()?;
+    cfg.migrate_docs_to_db(&db)?;
+
     match cli.command.unwrap_or(Command::Browse) {
-        Command::Browse => tui::run(cfg).await?,
-        Command::Read { alias } => tui::run_reader(cfg, &alias).await?,
+        Command::Browse => tui::run(cfg, db).await?,
+        Command::Read { alias } => tui::run_reader(cfg, db, &alias).await?,
         Command::Get { alias, no_cache } => {
-            let content = sources::fetch(&cfg, &alias, !no_cache).await?;
+            let content = sources::fetch(&cfg, &db, &alias, !no_cache).await?;
             print!("{content}");
         }
         Command::List => {
-            let docs = cfg.list_docs();
+            let docs = db.list_docs(None)?;
             if docs.is_empty() {
-                eprintln!("No docs configured. Add entries to ~/.config/tome/config.toml");
+                eprintln!("No docs configured. Use `tome add` to add docs.");
             } else {
                 println!("{:<24} {:<16} TAGS", "ALIAS", "SOURCE");
                 println!("{}", "-".repeat(60));
@@ -134,7 +139,7 @@ async fn main() -> Result<()> {
             }
         }
         Command::Search { query } => {
-            let results = sources::search(&cfg, &query).await?;
+            let results = sources::search(&cfg, &db, &query).await?;
             if results.is_empty() {
                 eprintln!("No results for '{query}'");
             } else {
@@ -161,7 +166,7 @@ async fn main() -> Result<()> {
             }
         },
         Command::Mcp => {
-            mcp::serve(cfg).await?;
+            mcp::serve(cfg, db).await?;
         }
         Command::Add { alias, file, url, tags } => {
             let tags_vec: Vec<String> = tags
@@ -186,7 +191,14 @@ async fn main() -> Result<()> {
                 tags_vec
             };
 
-            config::Config::add_inline_doc(&alias, &content, final_tags.clone())?;
+            db.add_doc(&db::DocRecord {
+                alias: alias.clone(),
+                source: "inline".to_string(),
+                page_id: None,
+                path: None,
+                tags: final_tags.clone(),
+                content: Some(content),
+            })?;
             println!(
                 "Saved '{}' with tags: {}",
                 alias,

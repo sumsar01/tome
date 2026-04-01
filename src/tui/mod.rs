@@ -12,17 +12,18 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
 use crate::config::Config;
+use crate::db::Db;
 use app::{App, Screen};
 
 /// Run the full TUI browser.
-pub async fn run(cfg: Config) -> Result<()> {
-    let mut app = App::new(cfg);
+pub async fn run(cfg: Config, db: Db) -> Result<()> {
+    let mut app = App::new(cfg, db);
     run_terminal(&mut app).await
 }
 
 /// Run the TUI directly into the reader for a specific alias.
-pub async fn run_reader(cfg: Config, alias: &str) -> Result<()> {
-    let mut app = App::new(cfg);
+pub async fn run_reader(cfg: Config, db: Db, alias: &str) -> Result<()> {
+    let mut app = App::new(cfg, db);
     app.open_doc(alias).await?;
     run_terminal(&mut app).await
 }
@@ -50,7 +51,10 @@ async fn run_terminal(app: &mut App) -> Result<()> {
 async fn run_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-) -> Result<()> {
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     loop {
         terminal.draw(|f| match app.screen {
             Screen::Browser => browser::draw(f, app),

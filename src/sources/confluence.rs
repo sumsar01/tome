@@ -153,9 +153,13 @@ fn preprocess_confluence(html: &str) -> String {
                 remaining = &remaining[body_start + end_pos + end_marker.len()..];
 
                 if is_code {
+                    // Extract language hint from <ac:parameter ac:name="language">LANG</ac:parameter>
+                    let lang = extract_ac_parameter(macro_body, "language").unwrap_or_default();
                     // Extract CDATA content from ac:plain-text-body
                     let code = extract_cdata(macro_body);
-                    out.push_str("\n\n```\n");
+                    out.push_str("\n\n```");
+                    out.push_str(lang);
+                    out.push('\n');
                     out.push_str(code.trim_matches('\n'));
                     out.push_str("\n```\n\n");
                 }
@@ -184,6 +188,15 @@ fn extract_cdata(s: &str) -> &str {
         }
     }
     s
+}
+
+/// Extract the text content of an `<ac:parameter ac:name="NAME">VALUE</ac:parameter>` element.
+fn extract_ac_parameter<'a>(s: &'a str, name: &str) -> Option<&'a str> {
+    let open = format!("ac:name=\"{name}\">");
+    let close = "</ac:parameter>";
+    let start = s.find(open.as_str())? + open.len();
+    let end = s[start..].find(close)? + start;
+    Some(s[start..end].trim())
 }
 
 /// Strip tags whose name starts with "ac:" or "ri:" (Confluence/Atlassian
@@ -362,7 +375,7 @@ fn post_process(md: &str) -> String {
             }
         } else {
             blank_count = 0;
-            out.push_str(trimmed);
+            out.push_str(line);  // preserve leading whitespace (list indents, etc.)
             out.push('\n');
         }
     }

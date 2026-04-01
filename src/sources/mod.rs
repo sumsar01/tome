@@ -2,11 +2,11 @@ pub mod confluence;
 pub mod github;
 pub mod local;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
-use crate::{cache, config::Config};
+use crate::{cache, config::Config, db::Db};
 
 /// Result of a search across sources
 pub struct SearchResult {
@@ -22,10 +22,18 @@ pub trait Source: Send + Sync {
 }
 
 /// Fetch a doc by alias, using cache if enabled and fresh.
-pub async fn fetch(cfg: &Config, alias: &str, use_cache: bool) -> Result<String> {
-    let doc = cfg
-        .find_doc(alias)
+pub async fn fetch(cfg: &Config, db: &Db, alias: &str, use_cache: bool) -> Result<String> {
+    let doc = db
+        .find_doc(alias)?
         .ok_or_else(|| anyhow::anyhow!("Unknown alias '{alias}'. Run `tome list` to see available docs."))?;
+
+    // Inline docs: content stored directly in DB
+    if doc.source == "inline" {
+        if let Some(content) = &doc.content {
+            return Ok(content.clone());
+        }
+        anyhow::bail!("Inline doc '{alias}' has no content stored.");
+    }
 
     // Try cache first
     if use_cache && cfg.cache.enabled {
@@ -36,7 +44,7 @@ pub async fn fetch(cfg: &Config, alias: &str, use_cache: bool) -> Result<String>
     }
 
     // Fetch live
-    let content = fetch_live(cfg, doc).await?;
+    let content = fetch_live(cfg, &doc).await?;
 
     // Store in cache
     if cfg.cache.enabled {
@@ -49,15 +57,8 @@ pub async fn fetch(cfg: &Config, alias: &str, use_cache: bool) -> Result<String>
 }
 
 /// Fetch doc content from the configured source, bypassing cache.
-async fn fetch_live(cfg: &Config, doc: &crate::config::DocConfig) -> Result<String> {
+async fn fetch_live(cfg: &Config, doc: &crate::db::DocRecord) -> Result<String> {
     let source_name = &doc.source;
-
-    // Inline docs saved by `tome add` / `tome_add` MCP tool
-    if source_name == "inline" {
-        let path = crate::config::inline_path(&doc.alias);
-        return std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read inline doc '{}' at {}", doc.alias, path.display()));
-    }
 
     // Special case: inline local path (source = "local" with no named source config)
     if source_name == "local" && cfg.find_source("local").is_none() {
@@ -75,10 +76,7 @@ async fn fetch_live(cfg: &Config, doc: &crate::config::DocConfig) -> Result<Stri
 
     match source_cfg.kind {
         crate::config::SourceKind::Local => {
-            let root = source_cfg
-                .root
-                .as_deref()
-                .unwrap_or(".");
+            let root = source_cfg.root.as_deref().unwrap_or(".");
             let path = doc.path.as_deref().unwrap_or("");
             let src = local::LocalSource::new(root.into());
             src.fetch_content(path).await
@@ -106,7 +104,7 @@ async fn fetch_live(cfg: &Config, doc: &crate::config::DocConfig) -> Result<Stri
                 .ok_or_else(|| anyhow::anyhow!("Confluence doc '{}' needs 'page_id' or 'path'", doc.alias))?;
             src.fetch_content(path).await
         }
-        // Inline is handled above before source lookup; this arm is unreachable
+        // Inline is handled above; this arm should be unreachable
         crate::config::SourceKind::Inline => {
             anyhow::bail!("Inline doc '{}' should not reach source dispatch", doc.alias)
         }
@@ -114,13 +112,12 @@ async fn fetch_live(cfg: &Config, doc: &crate::config::DocConfig) -> Result<Stri
 }
 
 /// Fuzzy search across all docs by alias and tags.
-/// For a deeper content search, docs are fetched (cached preferred).
-pub async fn search(cfg: &Config, query: &str) -> Result<Vec<SearchResult>> {
+pub async fn search(cfg: &Config, db: &Db, query: &str) -> Result<Vec<SearchResult>> {
+    let _ = cfg; // cfg kept for future use (cache settings etc.)
     let matcher = SkimMatcherV2::default();
     let mut results: Vec<SearchResult> = Vec::new();
 
-    for doc in &cfg.docs {
-        // Match against alias + tags
+    for doc in db.list_docs(None)? {
         let haystack = format!("{} {}", doc.alias, doc.tags.join(" "));
         if let Some(score) = matcher.fuzzy_match(&haystack, query) {
             results.push(SearchResult {

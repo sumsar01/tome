@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::config::Config;
+use crate::db::Db;
 use crate::sources;
 
 pub enum Screen {
@@ -10,6 +11,7 @@ pub enum Screen {
 
 pub struct App {
     pub cfg: Config,
+    pub db: Db,
     pub screen: Screen,
     /// All doc aliases for the browser list
     pub doc_aliases: Vec<String>,
@@ -30,10 +32,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cfg: Config) -> Self {
-        let doc_aliases = cfg.docs.iter().map(|d| d.alias.clone()).collect();
+    pub fn new(cfg: Config, db: Db) -> Self {
+        let doc_aliases = db
+            .list_docs(None)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| d.alias)
+            .collect();
         Self {
             cfg,
+            db,
             screen: Screen::Browser,
             doc_aliases,
             selected: 0,
@@ -63,7 +71,7 @@ impl App {
     /// Open a doc by alias into the reader screen.
     pub async fn open_doc(&mut self, alias: &str) -> Result<()> {
         self.status = format!("Loading '{alias}'...");
-        match sources::fetch(&self.cfg, alias, true).await {
+        match sources::fetch(&self.cfg, &self.db, alias, true).await {
             Ok(content) => {
                 self.reader_content = content;
                 self.reader_title = alias.to_string();
