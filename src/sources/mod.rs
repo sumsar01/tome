@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
-use crate::{cache, config::Config, db::Db};
+use crate::{cache, config::Config, db::{Db, SOURCE_INLINE}};
 
 /// Result of a search across sources
 pub struct SearchResult {
@@ -28,7 +28,7 @@ pub async fn fetch(cfg: &Config, db: &Db, alias: &str, use_cache: bool) -> Resul
         .ok_or_else(|| anyhow::anyhow!("Unknown alias '{alias}'. Run `tome list` to see available docs."))?;
 
     // Inline docs: content stored directly in DB
-    if doc.source == "inline" {
+    if doc.source == SOURCE_INLINE {
         if let Some(content) = &doc.content {
             return Ok(content.clone());
         }

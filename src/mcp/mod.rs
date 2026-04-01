@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::db::{Db, DocRecord};
+use crate::db::{Db, DocRecord, SOURCE_INLINE};
 use crate::sources;
 
 pub struct TomeServer {
@@ -132,7 +132,7 @@ impl TomeServer {
 
         let record = DocRecord {
             alias: alias.clone(),
-            source: "inline".to_string(),
+            source: SOURCE_INLINE.to_string(),
             page_id: None,
             path: None,
             tags: tags.clone(),

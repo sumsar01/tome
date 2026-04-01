@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::db::SOURCE_INLINE;
+
 /// Top-level config loaded from the platform config file.
 /// Contains only sources and cache settings.
 /// Doc registrations live in the SQLite database (`tome.db`).
@@ -145,7 +147,7 @@ impl Config {
         );
 
         for doc in &self.docs {
-            let content = if doc.source == "inline" {
+            let content = if doc.source == SOURCE_INLINE {
                 // Read content from the old .md file location
                 let md_path = legacy_inline_path(&doc.alias);
                 match std::fs::read_to_string(&md_path) {
@@ -189,7 +191,7 @@ impl Config {
 
         // Clean up old .md files for inline docs
         for doc in &self.docs {
-            if doc.source == "inline" {
+            if doc.source == SOURCE_INLINE {
                 let md_path = legacy_inline_path(&doc.alias);
                 let _ = std::fs::remove_file(&md_path); // best-effort
             }

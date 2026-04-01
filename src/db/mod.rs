@@ -11,6 +11,9 @@ use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// Source name used for docs whose content is stored directly in the DB.
+pub const SOURCE_INLINE: &str = "inline";
+
 /// A registered doc entry.
 #[derive(Debug, Clone)]
 pub struct DocRecord {
@@ -37,6 +40,7 @@ pub struct DocInfo {
 
 /// A search result
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SearchResult {
     pub alias: String,
     pub snippet: String,
@@ -167,6 +171,7 @@ impl Db {
     }
 
     /// Remove a doc by alias. Returns true if a row was deleted.
+    #[allow(dead_code)]
     pub fn remove_doc(&self, alias: &str) -> Result<bool> {
         let conn = self.inner.lock().unwrap();
         let n = conn
@@ -192,6 +197,7 @@ impl Db {
     }
 
     /// Check whether an alias exists.
+    #[allow(dead_code)]
     pub fn alias_exists(&self, alias: &str) -> bool {
         let conn = self.inner.lock().unwrap();
         conn.query_row(
@@ -237,6 +243,7 @@ impl Db {
 
     /// Full-text search over inline doc content using FTS5 + BM25 ranking.
     /// Returns results ordered by relevance (best first).
+    #[allow(dead_code)]
     pub fn search_fts(&self, query: &str) -> Result<Vec<SearchResult>> {
         let conn = self.inner.lock().unwrap();
         // FTS5 bm25() returns negative values; ORDER BY ascending = best first.
@@ -305,7 +312,7 @@ mod tests {
     #[test]
     fn add_and_find() {
         let db = Db::open_in_memory().unwrap();
-        db.add_doc(&make_doc("foo", "inline", Some("hello world")))
+        db.add_doc(&make_doc("foo", SOURCE_INLINE, Some("hello world")))
             .unwrap();
         let doc = db.find_doc("foo").unwrap().unwrap();
         assert_eq!(doc.alias, "foo");
@@ -315,17 +322,17 @@ mod tests {
     #[test]
     fn duplicate_alias_errors() {
         let db = Db::open_in_memory().unwrap();
-        db.add_doc(&make_doc("bar", "inline", Some("a"))).unwrap();
-        assert!(db.add_doc(&make_doc("bar", "inline", Some("b"))).is_err());
+        db.add_doc(&make_doc("bar", SOURCE_INLINE, Some("a"))).unwrap();
+        assert!(db.add_doc(&make_doc("bar", SOURCE_INLINE, Some("b"))).is_err());
     }
 
     #[test]
     fn list_with_tag_filter() {
         let db = Db::open_in_memory().unwrap();
-        let mut doc = make_doc("a", "inline", None);
+        let mut doc = make_doc("a", SOURCE_INLINE, None);
         doc.tags = vec!["rust".to_string()];
         db.add_doc(&doc).unwrap();
-        let mut doc2 = make_doc("b", "inline", None);
+        let mut doc2 = make_doc("b", SOURCE_INLINE, None);
         doc2.tags = vec!["python".to_string()];
         db.add_doc(&doc2).unwrap();
 
@@ -359,7 +366,7 @@ mod tests {
     #[test]
     fn remove_doc() {
         let db = Db::open_in_memory().unwrap();
-        db.add_doc(&make_doc("del", "inline", Some("bye"))).unwrap();
+        db.add_doc(&make_doc("del", SOURCE_INLINE, Some("bye"))).unwrap();
         assert!(db.alias_exists("del"));
         db.remove_doc("del").unwrap();
         assert!(!db.alias_exists("del"));

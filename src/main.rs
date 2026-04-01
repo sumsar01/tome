@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
 
             db.add_doc(&db::DocRecord {
                 alias: alias.clone(),
-                source: "inline".to_string(),
+                source: db::SOURCE_INLINE.to_string(),
                 page_id: None,
                 path: None,
                 tags: final_tags.clone(),
