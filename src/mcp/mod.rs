@@ -171,20 +171,14 @@ pub async fn serve(cfg: Config, db: Db) -> Result<()> {
 }
 
 /// Infer tags from markdown headings (H1/H2), slugified and capped at 5.
-/// Exposed as pub for use by the CLI `tome add` command.
-pub fn infer_tags_pub(content: &str) -> Vec<String> {
-    infer_tags(content)
-}
-
-/// Infer tags from markdown headings (H1/H2), slugified and capped at 5.
-fn infer_tags(content: &str) -> Vec<String> {
+pub(crate) fn infer_tags(content: &str) -> Vec<String> {
     let mut tags = Vec::new();
     for line in content.lines() {
         let line = line.trim();
-        let heading = if line.starts_with("## ") {
-            &line[3..]
-        } else if line.starts_with("# ") {
-            &line[2..]
+        let heading = if let Some(h) = line.strip_prefix("## ") {
+            h
+        } else if let Some(h) = line.strip_prefix("# ") {
+            h
         } else {
             continue;
         };

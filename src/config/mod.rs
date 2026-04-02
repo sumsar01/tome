@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::db::SOURCE_INLINE;
+use crate::paths;
 
 /// Top-level config loaded from the platform config file.
 /// Contains only sources and cache settings.
@@ -15,9 +16,32 @@ pub struct Config {
     pub sources: Vec<SourceConfig>,
     #[serde(default)]
     pub cache: CacheConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
     /// Legacy [[docs]] entries — read during migration only, then removed from disk.
     #[serde(default, skip_serializing)]
     pub docs: Vec<DocConfig>,
+}
+
+/// UI / appearance settings.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UiConfig {
+    /// Name of the built-in theme to use on startup.
+    /// Valid values: dark | light | catppuccin | gruvbox | nord | solarized-dark
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+        }
+    }
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
 }
 
 /// A named source (GitHub repo, Confluence space, local directory)
@@ -85,8 +109,11 @@ fn default_cache_enabled() -> bool {
     true
 }
 
+/// Default cache TTL: 1 hour.
+const DEFAULT_TTL_SECONDS: u64 = 3600;
+
 fn default_ttl() -> u64 {
-    3600
+    DEFAULT_TTL_SECONDS
 }
 
 impl Config {
@@ -207,12 +234,14 @@ impl Config {
         #[derive(Serialize)]
         struct CleanConfig<'a> {
             cache: &'a CacheConfig,
+            ui: &'a UiConfig,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             sources: &'a Vec<SourceConfig>,
         }
 
         let clean = CleanConfig {
             cache: &self.cache,
+            ui: &self.ui,
             sources: &self.sources,
         };
 
@@ -226,17 +255,12 @@ impl Config {
 }
 
 pub fn config_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("tome")
-        .join("config.toml")
+    paths::app_config_dir().join("config.toml")
 }
 
 /// Legacy path for inline .md files — used only during migration.
 pub fn legacy_inline_path(alias: &str) -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("tome")
+    paths::app_data_dir()
         .join("local")
         .join(format!("{alias}.md"))
 }
@@ -248,6 +272,12 @@ const DEFAULT_CONFIG: &str = r#"# tome configuration
 [cache]
 enabled = true
 ttl_seconds = 3600  # 1 hour
+
+# UI / appearance settings
+[ui]
+# Built-in themes: dark | light | catppuccin | gruvbox | nord | solarized-dark
+# Press T in the TUI to cycle through themes at runtime.
+theme = "dark"
 
 # --- Sources ---
 # Define named sources to reference when adding docs.

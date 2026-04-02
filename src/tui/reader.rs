@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
 };
@@ -32,7 +32,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Span::raw("  "),
             Span::styled(
                 app.status.clone(),
-                Style::default().fg(Color::Yellow),
+                theme.status_style(),
             ),
         ])
     } else {
@@ -45,6 +45,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             }
         }
         bindings.push(("y", "Copy"));
+        bindings.push(("T", "Theme"));
         bindings.push(("q/Esc", "Back"));
         theme.help_bar(&bindings)
     };
@@ -223,6 +224,9 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 let _ = clipboard.set_text(app.reader_content.clone());
                 app.status = "Copied to clipboard!".to_string();
             }
+        }
+        KeyCode::Char('T') => {
+            app.cycle_theme();
         }
         KeyCode::Char('q') | KeyCode::Esc => {
             app.status.clear();

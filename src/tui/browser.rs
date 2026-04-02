@@ -3,86 +3,72 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 use super::app::App;
+use super::markdown::markdown_to_text;
 
 pub fn draw(f: &mut Frame, app: &App) {
-    let chunks = Layout::default()
+    let theme = &app.theme;
+    let area = f.area();
+
+    // ── Outer vertical split ────────────────────────────────────────────────
+    // Row 0: owl header  (5 lines)
+    // Row 1: content pane (list + preview, fills)
+    // Row 2: filter bar  (1 line)
+    // Row 3: help bar    (1 line)
+    let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
-            Constraint::Min(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(5), // header
+            Constraint::Min(3),    // content
+            Constraint::Length(1), // filter
+            Constraint::Length(1), // help
         ])
-        .split(f.area());
+        .split(area);
 
-    // Logo header — owl mascot
-    let owl = Style::default().fg(Color::Magenta);
-    let title = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(Color::DarkGray);
+    // ── Header ──────────────────────────────────────────────────────────────
+    let owl_style = Style::default().fg(theme.accent);
+    let title_style = theme.title_style();
+    let dim_style = theme.dim_style();
+
     let logo = Paragraph::new(Text::from(vec![
-        Line::from(vec![Span::styled("    ,___,", owl)]),
+        Line::from(vec![Span::styled("    ,___,", owl_style)]),
         Line::from(vec![
-            Span::styled("   (o,o)", owl),
+            Span::styled("   (o,o)", owl_style),
             Span::raw("    "),
-            Span::styled("t o m e", title),
+            Span::styled("t o m e", title_style),
         ]),
         Line::from(vec![
-            Span::styled("   {`\"'}", owl),
+            Span::styled("   {`\"'}", owl_style),
             Span::raw("    "),
-            Span::styled("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}", dim),
+            Span::styled("─────────────────────────────────────────", dim_style),
         ]),
         Line::from(vec![
-            Span::styled("   -\"-\"-", owl),
+            Span::styled("   -\"-\"-", owl_style),
             Span::raw("    "),
-            Span::styled("docs for humans & AI", dim),
+            Span::styled("docs for humans & AI", dim_style),
         ]),
         Line::from(vec![]),
     ]));
-    f.render_widget(logo, chunks[0]);
+    f.render_widget(logo, outer[0]);
 
-    // Doc list
-    let aliases = app.filtered_aliases();
-    let items: Vec<ListItem> = aliases
-        .iter()
-        .map(|a| {
-            let doc = app.db.find_doc(a).ok().flatten();
-            let source = doc.as_ref().map(|d| d.source.clone()).unwrap_or_else(|| "?".to_string());
-            let tags = doc.as_ref().map(|d| d.tags.join(", ")).unwrap_or_default();
+    // ── Content: left list + right preview ──────────────────────────────────
+    let content = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(35), // doc list
+            Constraint::Percentage(65), // preview
+        ])
+        .split(outer[1]);
 
-            let line = Line::from(vec![
-                Span::styled(*a, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled(source, Style::default().fg(Color::Cyan)),
-                Span::raw("  "),
-                Span::styled(tags, Style::default().fg(Color::DarkGray)),
-            ]);
-            ListItem::new(line)
-        })
-        .collect();
+    draw_doc_list(f, app, content[0]);
+    draw_preview(f, app, content[1]);
 
-    let mut list_state = ListState::default();
-    list_state.select(if aliases.is_empty() { None } else { Some(app.selected.min(aliases.len().saturating_sub(1))) });
-
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(" tome ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Magenta)),
-        )
-        .highlight_style(Style::default().bg(Color::Magenta).fg(Color::Black).add_modifier(Modifier::BOLD))
-        .highlight_symbol(" > ");
-
-    f.render_stateful_widget(list, chunks[1], &mut list_state);
-
-    // Filter bar
+    // ── Filter bar ──────────────────────────────────────────────────────────
     let filter_text = if app.filtering {
         format!("/ {}_", app.filter)
     } else if !app.filter.is_empty() {
@@ -91,20 +77,132 @@ pub fn draw(f: &mut Frame, app: &App) {
         String::new()
     };
 
-    let filter_bar = Paragraph::new(filter_text)
-        .style(Style::default().fg(Color::Yellow));
-    f.render_widget(filter_bar, chunks[2]);
+    f.render_widget(
+        Paragraph::new(filter_text).style(theme.filter_style()),
+        outer[2],
+    );
 
-    // Status / help bar
-    let help = if app.status.is_empty() {
-        "  j/k navigate   enter open   / filter   q quit".to_string()
+    // ── Help / status bar ───────────────────────────────────────────────────
+    let help_line = if !app.status.is_empty() {
+        Line::from(Span::styled(
+            format!("  {}", app.status),
+            theme.status_style(),
+        ))
+    } else if app.filtering {
+        theme.help_bar(&[
+            ("Type", "Filter"),
+            ("Enter", "Confirm"),
+            ("Esc", "Cancel"),
+        ])
     } else {
-        app.status.clone()
+        theme.help_bar(&[
+            ("j/k", "Navigate"),
+            ("Enter", "Open"),
+            ("/", "Filter"),
+            ("T", "Theme"),
+            ("q", "Quit"),
+        ])
     };
-    let status = Paragraph::new(help)
-        .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(status, chunks[3]);
+
+    f.render_widget(Paragraph::new(help_line), outer[3]);
 }
+
+fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let theme = &app.theme;
+    let aliases = app.filtered_aliases();
+    let total = app.doc_aliases.len();
+    let shown = aliases.len();
+
+    let items: Vec<ListItem> = aliases
+        .iter()
+        .map(|a| {
+            let doc = app.db.find_doc(a).ok().flatten();
+            let source = doc
+                .as_ref()
+                .map(|d| d.source.clone())
+                .unwrap_or_else(|| "?".to_string());
+            let tags = doc.as_ref().map(|d| d.tags.join(", ")).unwrap_or_default();
+
+            let mut spans = vec![
+                Span::styled(
+                    *a,
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(source, theme.source_style()),
+            ];
+            if !tags.is_empty() {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(tags, theme.dim_style()));
+            }
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    list_state.select(if aliases.is_empty() {
+        None
+    } else {
+        Some(app.selected.min(aliases.len().saturating_sub(1)))
+    });
+
+    // Title shows filtered count vs total
+    let list_title = if shown < total {
+        format!(" tome  {}/{} ", shown, total)
+    } else {
+        format!(" tome  {} ", total)
+    };
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(list_title)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(theme.border_style()),
+        )
+        .highlight_style(theme.selection_style())
+        .highlight_symbol(" ▶ ");
+
+    f.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let theme = &app.theme;
+
+    let title = match &app.preview_alias {
+        Some(alias) => format!(" {} ", alias),
+        None => " preview ".to_string(),
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style());
+
+    match &app.preview_content {
+        Some(md) => {
+            let widget = Paragraph::new(markdown_to_text(md, theme))
+                .block(block)
+                .wrap(Wrap { trim: false });
+            f.render_widget(widget, area);
+        }
+        None => {
+            let msg = if app.preview_alias.is_some() {
+                "  Loading…"
+            } else {
+                "  Select a doc to preview"
+            };
+            let widget = Paragraph::new(Line::from(Span::styled(msg, theme.dim_style())))
+                .block(block);
+            f.render_widget(widget, area);
+        }
+    }
+}
+
+// ── Key handling ──────────────────────────────────────────────────────────────
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if app.filtering {
@@ -113,16 +211,19 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.filtering = false;
                 app.filter.clear();
                 app.selected = 0;
+                app.load_preview().await?;
             }
             KeyCode::Enter => {
                 app.filtering = false;
             }
             KeyCode::Backspace => {
                 app.filter.pop();
+                app.load_preview().await?;
             }
             KeyCode::Char(c) => {
                 app.filter.push(c);
                 app.selected = 0;
+                app.load_preview().await?;
             }
             _ => {}
         }
@@ -136,10 +237,12 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('j') | KeyCode::Down => {
             if count > 0 {
                 app.selected = (app.selected + 1).min(count - 1);
+                app.load_preview().await?;
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.selected = app.selected.saturating_sub(1);
+            app.load_preview().await?;
         }
         KeyCode::Char('/') => {
             app.filtering = true;
@@ -149,6 +252,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
             if !app.filter.is_empty() {
                 app.filter.clear();
                 app.selected = 0;
+                app.load_preview().await?;
             }
         }
         KeyCode::Enter => {
@@ -157,6 +261,9 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 let alias = alias.to_string();
                 app.open_doc(&alias).await?;
             }
+        }
+        KeyCode::Char('T') => {
+            app.cycle_theme();
         }
         _ => {}
     }

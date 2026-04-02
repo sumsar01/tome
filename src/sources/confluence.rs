@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use super::Source;
 use crate::config::auth;
+use crate::http;
 
 /// Confluence API v2 source
 pub struct ConfluenceSource {
@@ -14,10 +15,7 @@ pub struct ConfluenceSource {
 
 impl ConfluenceSource {
     pub fn new(base_url: &str) -> Result<Self> {
-        let client = Client::builder()
-            .user_agent("tome/0.1")
-            .build()
-            .context("Failed to build HTTP client")?;
+        let client = http::build_http_client()?;
 
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -37,16 +35,8 @@ struct PageResponse {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct PageBody {
     storage: Option<StorageBody>,
-    atlas_doc_format: Option<AtlasBody>,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct AtlasBody {
-    value: String,
 }
 
 #[derive(Deserialize)]
@@ -213,7 +203,7 @@ fn strip_ac_tags(html: &str) -> String {
             // Read tag name
             let tag_name_start = if remaining.starts_with("</") { 2 } else { 1 };
             let tag_name_end = remaining[tag_name_start..]
-                .find(|c: char| c == '>' || c == ' ' || c == '/')
+                .find(|c: char| ['>', ' ', '/'].contains(&c))
                 .map(|p| tag_name_start + p)
                 .unwrap_or(remaining.len());
             let tag_name = &remaining[tag_name_start..tag_name_end];

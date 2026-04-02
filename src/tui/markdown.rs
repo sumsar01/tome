@@ -75,6 +75,7 @@ struct Renderer {
     in_table: bool,
     in_table_header: bool,
     /// Collected rows: each row is a Vec of (plain_text, styled_spans) per cell
+    #[allow(clippy::type_complexity)]
     table_rows: Vec<(bool, Vec<(String, Vec<Span<'static>>)>)>,
     table_current_row: Vec<(String, Vec<Span<'static>>)>,
     table_cell_text: String,
