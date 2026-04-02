@@ -237,7 +237,7 @@ impl Renderer {
             }
             Event::End(TagEnd::CodeBlock) => {
                 self.in_code_block = false;
-                const CODE_WIDTH: usize = 92;
+                const CODE_WIDTH: usize = 76;
                 let rule = Span::styled(
                     "─".repeat(CODE_WIDTH),
                     Style::default().fg(Color::Rgb(50, 50, 65)),
@@ -282,14 +282,60 @@ impl Renderer {
                 }
             }
             Event::End(TagEnd::Heading(level)) => {
-                let (style, prefix) = self.heading_style(level);
-                let mut heading_spans: Vec<Span<'static>> = vec![Span::raw(prefix)];
-                heading_spans.extend(
-                    self.spans
-                        .drain(..)
-                        .map(|s| Span::styled(s.content, style.patch(s.style))),
-                );
-                self.lines.push(Line::from(heading_spans));
+                const HEADING_WIDTH: usize = 76;
+                // Collect plain text of the heading for width calculation
+                let title: String = self.spans.iter().map(|s| s.content.as_ref()).collect();
+
+                match level {
+                    HeadingLevel::H1 => {
+                        // Black-on-magenta, padded to HEADING_WIDTH so background fills the line
+                        let style = Style::default()
+                            .fg(Color::Black)
+                            .bg(self.accent)
+                            .add_modifier(Modifier::BOLD);
+                        let pad = HEADING_WIDTH.saturating_sub(title.chars().count() + 1);
+                        let mut spans: Vec<Span<'static>> =
+                            vec![Span::styled(" ".to_string(), style)];
+                        spans.extend(
+                            self.spans
+                                .drain(..)
+                                .map(|s| Span::styled(s.content, style.patch(s.style))),
+                        );
+                        spans.push(Span::styled(" ".repeat(pad), style));
+                        self.lines.push(Line::from(spans));
+                    }
+                    HeadingLevel::H2 => {
+                        // ── Title ─────────────────  (dim fill dashes, magenta bold title)
+                        let title_style = Style::default()
+                            .fg(self.accent)
+                            .add_modifier(Modifier::BOLD);
+                        let dim_style = Style::default().fg(self.fg_dim);
+                        let prefix = "── ";
+                        let suffix = " ";
+                        let used =
+                            prefix.chars().count() + title.chars().count() + suffix.chars().count();
+                        let fill = HEADING_WIDTH.saturating_sub(used);
+                        let mut spans: Vec<Span<'static>> = vec![Span::styled(prefix, dim_style)];
+                        spans.extend(
+                            self.spans
+                                .drain(..)
+                                .map(|s| Span::styled(s.content, title_style.patch(s.style))),
+                        );
+                        spans.push(Span::styled(suffix, dim_style));
+                        spans.push(Span::styled("─".repeat(fill), dim_style));
+                        self.lines.push(Line::from(spans));
+                    }
+                    _ => {
+                        let (style, prefix) = self.heading_style(level);
+                        let mut spans: Vec<Span<'static>> = vec![Span::raw(prefix)];
+                        spans.extend(
+                            self.spans
+                                .drain(..)
+                                .map(|s| Span::styled(s.content, style.patch(s.style))),
+                        );
+                        self.lines.push(Line::from(spans));
+                    }
+                }
                 self.push_blank();
             }
 

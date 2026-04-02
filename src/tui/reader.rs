@@ -52,7 +52,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(Paragraph::new(help_line), help_area);
 
     // ── Content horizontal split ──────────────────────────────────────────────
-    // Layout: [gutter] [ToC (optional, max 22)] [reading col (max 80)] [gutter] [scrollbar(1)]
+    // Layout: [gutter] [ToC (optional, max 26)] [reading col (max 100)] [gutter] [scrollbar(1)]
     let show_toc = app.toc_visible && !app.toc.is_empty();
 
     let reading_col_area = if show_toc {
@@ -60,11 +60,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .direction(Direction::Horizontal)
             .flex(Flex::Center)
             .constraints([
-                Constraint::Fill(1),   // left gutter
-                Constraint::Max(22),   // ToC sidebar
-                Constraint::Max(80),   // reading column
-                Constraint::Fill(1),   // right gutter
-                Constraint::Length(1), // scrollbar
+                Constraint::Fill(1),    // left gutter
+                Constraint::Max(26),    // ToC sidebar
+                Constraint::Max(100),   // reading column
+                Constraint::Fill(1),    // right gutter
+                Constraint::Length(1),  // scrollbar
             ])
             .split(content_area);
 
@@ -76,10 +76,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .direction(Direction::Horizontal)
             .flex(Flex::Center)
             .constraints([
-                Constraint::Fill(1),   // left gutter
-                Constraint::Max(80),   // reading column
-                Constraint::Fill(1),   // right gutter
-                Constraint::Length(1), // scrollbar
+                Constraint::Fill(1),    // left gutter
+                Constraint::Max(100),   // reading column
+                Constraint::Fill(1),    // right gutter
+                Constraint::Length(1),  // scrollbar
             ])
             .split(content_area);
 
