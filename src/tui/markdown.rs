@@ -58,6 +58,9 @@ pub fn extract_headings(input: &str) -> Vec<(u16, String)> {
 
 // ── Internal renderer ─────────────────────────────────────────────────────────
 
+/// Maximum render width (columns) for code blocks, headings, and horizontal rules.
+const RENDER_WIDTH: usize = 76;
+
 struct Renderer {
     // Output
     lines: Vec<Line<'static>>,
@@ -242,279 +245,48 @@ impl Renderer {
 
     fn handle_event(&mut self, event: Event) {
         match event {
-            // ── Code blocks ────────────────────────────────────────────────────
-            Event::Start(Tag::CodeBlock(kind)) => {
-                self.in_code_block = true;
-                self.code_lang = match kind {
-                    CodeBlockKind::Fenced(lang) => lang.to_string(),
-                    CodeBlockKind::Indented => String::new(),
-                };
-                self.code_lines.clear();
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                self.in_code_block = false;
-                const CODE_WIDTH: usize = 76;
-                let rule =
-                    Span::styled("─".repeat(CODE_WIDTH), Style::default().fg(self.code_rule));
-                self.lines.push(Line::from(rule.clone()));
-
-                // Language label: dim italic, 2-space indent
-                if !self.code_lang.is_empty() {
-                    self.lines.push(Line::from(Span::styled(
-                        format!("  {}", self.code_lang),
-                        Style::default()
-                            .fg(self.fg_dim)
-                            .add_modifier(Modifier::ITALIC),
-                    )));
-                }
-
-                // Build a syntect highlighter for the language (if known)
-                let syntect_theme_name = self.syntect_theme;
-                let code_lang = self.code_lang.clone();
-                let code_lines = std::mem::take(&mut self.code_lines);
-
-                SYNTAX_SET.with(|ss| {
-                    THEME_SET.with(|ts| {
-                        // Resolve syntax — try the exact lang tag, then plain-text fallback
-                        let syntax = if code_lang.is_empty() {
-                            None
-                        } else {
-                            ss.find_syntax_by_token(&code_lang)
-                        };
-
-                        // Resolve syntect theme — fall back to "base16-ocean.dark" if not found
-                        let theme = ts
-                            .themes
-                            .get(syntect_theme_name)
-                            .or_else(|| ts.themes.get("base16-ocean.dark"));
-
-                        let mut highlighter = syntax
-                            .zip(theme)
-                            .map(|(syn, thm)| HighlightLines::new(syn, thm));
-
-                        for cl in &code_lines {
-                            let spans = match highlighter.as_mut() {
-                                Some(hl) => {
-                                    let line_with_newline = format!("{}\n", cl);
-                                    match hl.highlight_line(&line_with_newline, ss) {
-                                        Ok(tokens) => {
-                                            let mut spans: Vec<Span<'static>> = Vec::new();
-                                            spans.push(Span::raw("  "));
-                                            for (style, text) in tokens {
-                                                if text.is_empty() || text == "\n" {
-                                                    continue;
-                                                }
-                                                let fg = syntect_color_to_ratatui(style.foreground);
-                                                let mut ratatui_style = Style::default().fg(fg);
-                                                use syntect::highlighting::FontStyle;
-                                                if style.font_style.contains(FontStyle::BOLD) {
-                                                    ratatui_style =
-                                                        ratatui_style.add_modifier(Modifier::BOLD);
-                                                }
-                                                if style.font_style.contains(FontStyle::ITALIC) {
-                                                    ratatui_style = ratatui_style
-                                                        .add_modifier(Modifier::ITALIC);
-                                                }
-                                                if style.font_style.contains(FontStyle::UNDERLINE) {
-                                                    ratatui_style = ratatui_style
-                                                        .add_modifier(Modifier::UNDERLINED);
-                                                }
-                                                let text_owned =
-                                                    text.trim_end_matches('\n').to_string();
-                                                spans.push(Span::styled(text_owned, ratatui_style));
-                                            }
-                                            spans
-                                        }
-                                        Err(_) => vec![Span::styled(
-                                            format!("  {}", cl),
-                                            Style::default().fg(self.code_fg),
-                                        )],
-                                    }
-                                }
-                                None => vec![Span::styled(
-                                    format!("  {}", cl),
-                                    Style::default().fg(self.code_fg),
-                                )],
-                            };
-                            self.lines.push(Line::from(spans));
-                        }
-                    });
-                });
-
-                self.lines.push(Line::from(rule));
-                self.push_blank();
-                self.code_lang.clear();
-            }
+            Event::Start(Tag::CodeBlock(kind)) => self.start_code_block(kind),
+            Event::End(TagEnd::CodeBlock) => self.end_code_block(),
             Event::Text(t) if self.in_code_block => {
                 for line in t.lines() {
                     self.code_lines.push(line.to_string());
                 }
             }
-
-            // ── Headings ───────────────────────────────────────────────────────
-            Event::Start(Tag::Heading { .. }) => {
-                if !self.lines.is_empty() {
-                    self.push_blank();
-                }
-            }
-            Event::End(TagEnd::Heading(level)) => {
-                const HEADING_WIDTH: usize = 76;
-                // Collect plain text of the heading for width calculation
-                let title: String = self.spans.iter().map(|s| s.content.as_ref()).collect();
-
-                match level {
-                    HeadingLevel::H1 => {
-                        // Black-on-magenta, padded to HEADING_WIDTH so background fills the line
-                        let style = Style::default()
-                            .fg(Color::Black)
-                            .bg(self.accent)
-                            .add_modifier(Modifier::BOLD);
-                        let pad = HEADING_WIDTH.saturating_sub(title.chars().count() + 1);
-                        let mut spans: Vec<Span<'static>> =
-                            vec![Span::styled(" ".to_string(), style)];
-                        spans.extend(
-                            self.spans
-                                .drain(..)
-                                .map(|s| Span::styled(s.content, style.patch(s.style))),
-                        );
-                        spans.push(Span::styled(" ".repeat(pad), style));
-                        self.lines.push(Line::from(spans));
-                    }
-                    HeadingLevel::H2 => {
-                        // ── Title ─────────────────  (dim fill dashes, magenta bold title)
-                        let title_style = Style::default()
-                            .fg(self.accent)
-                            .add_modifier(Modifier::BOLD);
-                        let dim_style = Style::default().fg(self.fg_dim);
-                        let prefix = "── ";
-                        let suffix = " ";
-                        let used =
-                            prefix.chars().count() + title.chars().count() + suffix.chars().count();
-                        let fill = HEADING_WIDTH.saturating_sub(used);
-                        let mut spans: Vec<Span<'static>> = vec![Span::styled(prefix, dim_style)];
-                        spans.extend(
-                            self.spans
-                                .drain(..)
-                                .map(|s| Span::styled(s.content, title_style.patch(s.style))),
-                        );
-                        spans.push(Span::styled(suffix, dim_style));
-                        spans.push(Span::styled("─".repeat(fill), dim_style));
-                        self.lines.push(Line::from(spans));
-                    }
-                    _ => {
-                        let (style, prefix) = self.heading_style(level);
-                        let mut spans: Vec<Span<'static>> = vec![Span::raw(prefix)];
-                        spans.extend(
-                            self.spans
-                                .drain(..)
-                                .map(|s| Span::styled(s.content, style.patch(s.style))),
-                        );
-                        self.lines.push(Line::from(spans));
-                    }
-                }
-                self.push_blank();
-            }
-
-            // ── Paragraphs ─────────────────────────────────────────────────────
+            Event::Start(Tag::Heading { .. }) => self.start_heading(),
+            Event::End(TagEnd::Heading(level)) => self.end_heading(level),
             Event::Start(Tag::Paragraph) => {}
             Event::End(TagEnd::Paragraph) => {
                 self.flush_line();
                 self.push_blank();
             }
-
-            // ── Blockquotes ────────────────────────────────────────────────────
-            Event::Start(Tag::BlockQuote(_)) => {
-                self.blockquote_depth += 1;
-            }
+            Event::Start(Tag::BlockQuote(_)) => self.blockquote_depth += 1,
             Event::End(TagEnd::BlockQuote(_)) => {
                 if self.blockquote_depth > 0 {
                     self.blockquote_depth -= 1;
                 }
             }
-
-            // ── Lists ──────────────────────────────────────────────────────────
-            Event::Start(Tag::List(start)) => {
-                self.list_stack.push(start);
-            }
+            Event::Start(Tag::List(start)) => self.list_stack.push(start),
             Event::End(TagEnd::List(_)) => {
                 self.list_stack.pop();
                 if self.list_stack.is_empty() {
                     self.push_blank();
                 }
             }
-            Event::Start(Tag::Item) => {
-                let depth = self.list_stack.len().saturating_sub(1);
-                let indent = "  ".repeat(depth);
-                let bullet = match self.list_stack.last_mut() {
-                    Some(Some(n)) => {
-                        let s = format!("{indent}{}. ", n);
-                        *n += 1;
-                        s
-                    }
-                    _ => format!("{indent}• "),
-                };
-                self.spans
-                    .push(Span::styled(bullet, Style::default().fg(self.accent)));
-            }
-            Event::End(TagEnd::Item) => {
-                self.flush_line();
-            }
-
-            // ── Inline formatting ──────────────────────────────────────────────
+            Event::Start(Tag::Item) => self.start_list_item(),
+            Event::End(TagEnd::Item) => self.flush_line(),
             Event::Start(Tag::Strong) => self.bold = true,
             Event::End(TagEnd::Strong) => self.bold = false,
             Event::Start(Tag::Emphasis) => self.italic = true,
             Event::End(TagEnd::Emphasis) => self.italic = false,
             Event::Start(Tag::Strikethrough) => self.strikethrough = true,
             Event::End(TagEnd::Strikethrough) => self.strikethrough = false,
-            Event::Code(t) => {
-                let s = t.into_string();
-                let span = Span::styled(
-                    format!(" {} ", s),
-                    Style::default().fg(self.code_fg).bg(self.code_span_bg),
-                );
-                if self.in_table {
-                    self.table_cell_text.push_str(&s);
-                    self.table_cell_spans.push(span);
-                } else {
-                    self.spans.push(span);
-                }
-            }
-
-            // ── Links ──────────────────────────────────────────────────────────
-            Event::Start(Tag::Link { .. }) => {
-                // link text will follow as Text events; show it bold-white
-            }
-            Event::End(TagEnd::Link) => {
-                // nothing extra — link text was rendered inline
-            }
-
-            // ── Images ─────────────────────────────────────────────────────────
-            Event::Start(Tag::Image { dest_url, .. }) => {
-                self.spans.push(Span::styled(
-                    format!("[image: {}]", dest_url),
-                    Style::default()
-                        .fg(self.fg_dim)
-                        .add_modifier(Modifier::ITALIC),
-                ));
-            }
+            Event::Code(t) => self.handle_inline_code(t),
+            Event::Start(Tag::Link { .. }) => {}
+            Event::End(TagEnd::Link) => {}
+            Event::Start(Tag::Image { dest_url, .. }) => self.handle_image(dest_url),
             Event::End(TagEnd::Image) => {}
-
-            // ── Tables ─────────────────────────────────────────────────────────
-            Event::Start(Tag::Table(_)) => {
-                self.push_blank();
-                self.in_table = true;
-                self.in_table_header = false;
-                self.table_rows.clear();
-                self.table_current_row.clear();
-                self.table_cell_text.clear();
-                self.table_cell_spans.clear();
-            }
-            Event::End(TagEnd::Table) => {
-                self.in_table = false;
-                self.render_table();
-                self.push_blank();
-            }
+            Event::Start(Tag::Table(_)) => self.start_table(),
+            Event::End(TagEnd::Table) => self.end_table(),
             Event::Start(Tag::TableHead) => {
                 self.in_table_header = true;
                 self.table_current_row.clear();
@@ -524,9 +296,7 @@ impl Renderer {
                 self.table_rows.push((true, row));
                 self.in_table_header = false;
             }
-            Event::Start(Tag::TableRow) => {
-                self.table_current_row.clear();
-            }
+            Event::Start(Tag::TableRow) => self.table_current_row.clear(),
             Event::End(TagEnd::TableRow) => {
                 let row = std::mem::take(&mut self.table_current_row);
                 self.table_rows.push((false, row));
@@ -540,63 +310,11 @@ impl Renderer {
                 let spans = std::mem::take(&mut self.table_cell_spans);
                 self.table_current_row.push((text, spans));
             }
-
-            // ── Horizontal rule ────────────────────────────────────────────────
-            Event::Rule => {
-                self.push_blank();
-                self.lines.push(Line::from(Span::styled(
-                    "─".repeat(80),
-                    Style::default().fg(self.fg_dim),
-                )));
-                self.push_blank();
-            }
-
-            // ── Soft / hard breaks ─────────────────────────────────────────────
-            Event::SoftBreak => {
-                self.spans.push(Span::raw(" "));
-            }
-            Event::HardBreak => {
-                self.flush_line();
-            }
-
-            // ── Plain text ─────────────────────────────────────────────────────
-            Event::Text(t) if self.in_table => {
-                // Accumulate into the current cell
-                let s = t.into_string();
-                self.table_cell_text.push_str(&s);
-                let mut style = Style::default();
-                if self.bold {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                if self.italic {
-                    style = style.add_modifier(Modifier::ITALIC);
-                }
-                if self.strikethrough {
-                    style = style.add_modifier(Modifier::CROSSED_OUT);
-                }
-                if self.in_table_header {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                self.table_cell_spans.push(Span::styled(s, style));
-            }
-            Event::Text(t) => {
-                let mut style = Style::default();
-                if self.bold {
-                    style = style.add_modifier(Modifier::BOLD);
-                }
-                if self.italic {
-                    style = style.add_modifier(Modifier::ITALIC);
-                }
-                if self.strikethrough {
-                    style = style.add_modifier(Modifier::CROSSED_OUT);
-                }
-                if self.blockquote_depth > 0 {
-                    style = style.fg(self.quote).add_modifier(Modifier::ITALIC);
-                }
-                self.spans.push(Span::styled(t.into_string(), style));
-            }
-
-            // ── HTML (pass-through as dim text) ────────────────────────────────
+            Event::Rule => self.handle_rule(),
+            Event::SoftBreak => self.spans.push(Span::raw(" ")),
+            Event::HardBreak => self.flush_line(),
+            Event::Text(t) if self.in_table => self.handle_table_text(t),
+            Event::Text(t) => self.handle_text(t),
             Event::Html(t) | Event::InlineHtml(t) => {
                 let s = t.trim().to_string();
                 if !s.is_empty() {
@@ -604,9 +322,274 @@ impl Renderer {
                         .push(Span::styled(s, Style::default().fg(self.fg_dim)));
                 }
             }
-
             _ => {}
         }
+    }
+
+    // ── Code block helpers ─────────────────────────────────────────────────────
+
+    fn start_code_block(&mut self, kind: CodeBlockKind) {
+        self.in_code_block = true;
+        self.code_lang = match kind {
+            CodeBlockKind::Fenced(lang) => lang.to_string(),
+            CodeBlockKind::Indented => String::new(),
+        };
+        self.code_lines.clear();
+    }
+
+    fn end_code_block(&mut self) {
+        self.in_code_block = false;
+        const CODE_WIDTH: usize = RENDER_WIDTH;
+        let rule = Span::styled("─".repeat(CODE_WIDTH), Style::default().fg(self.code_rule));
+        self.lines.push(Line::from(rule.clone()));
+
+        if !self.code_lang.is_empty() {
+            self.lines.push(Line::from(Span::styled(
+                format!("  {}", self.code_lang),
+                Style::default()
+                    .fg(self.fg_dim)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+        }
+
+        let syntect_theme_name = self.syntect_theme;
+        let code_lang = self.code_lang.clone();
+        let code_lines = std::mem::take(&mut self.code_lines);
+
+        SYNTAX_SET.with(|ss| {
+            THEME_SET.with(|ts| {
+                let syntax = if code_lang.is_empty() {
+                    None
+                } else {
+                    ss.find_syntax_by_token(&code_lang)
+                };
+                let theme = ts
+                    .themes
+                    .get(syntect_theme_name)
+                    .or_else(|| ts.themes.get("base16-ocean.dark"));
+                let mut highlighter = syntax
+                    .zip(theme)
+                    .map(|(syn, thm)| HighlightLines::new(syn, thm));
+
+                for cl in &code_lines {
+                    let spans = match highlighter.as_mut() {
+                        Some(hl) => {
+                            let line_with_newline = format!("{}\n", cl);
+                            match hl.highlight_line(&line_with_newline, ss) {
+                                Ok(tokens) => {
+                                    let mut spans: Vec<Span<'static>> = vec![Span::raw("  ")];
+                                    for (style, text) in tokens {
+                                        if text.is_empty() || text == "\n" {
+                                            continue;
+                                        }
+                                        let fg = syntect_color_to_ratatui(style.foreground);
+                                        let mut ratatui_style = Style::default().fg(fg);
+                                        use syntect::highlighting::FontStyle;
+                                        if style.font_style.contains(FontStyle::BOLD) {
+                                            ratatui_style =
+                                                ratatui_style.add_modifier(Modifier::BOLD);
+                                        }
+                                        if style.font_style.contains(FontStyle::ITALIC) {
+                                            ratatui_style =
+                                                ratatui_style.add_modifier(Modifier::ITALIC);
+                                        }
+                                        if style.font_style.contains(FontStyle::UNDERLINE) {
+                                            ratatui_style =
+                                                ratatui_style.add_modifier(Modifier::UNDERLINED);
+                                        }
+                                        let text_owned = text.trim_end_matches('\n').to_string();
+                                        spans.push(Span::styled(text_owned, ratatui_style));
+                                    }
+                                    spans
+                                }
+                                Err(_) => vec![Span::styled(
+                                    format!("  {}", cl),
+                                    Style::default().fg(self.code_fg),
+                                )],
+                            }
+                        }
+                        None => vec![Span::styled(
+                            format!("  {}", cl),
+                            Style::default().fg(self.code_fg),
+                        )],
+                    };
+                    self.lines.push(Line::from(spans));
+                }
+            });
+        });
+
+        self.lines.push(Line::from(rule));
+        self.push_blank();
+        self.code_lang.clear();
+    }
+
+    // ── Heading helpers ────────────────────────────────────────────────────────
+
+    fn start_heading(&mut self) {
+        if !self.lines.is_empty() {
+            self.push_blank();
+        }
+    }
+
+    fn end_heading(&mut self, level: HeadingLevel) {
+        const HEADING_WIDTH: usize = RENDER_WIDTH;
+        let title: String = self.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        match level {
+            HeadingLevel::H1 => {
+                let style = Style::default()
+                    .fg(Color::Black)
+                    .bg(self.accent)
+                    .add_modifier(Modifier::BOLD);
+                let pad = HEADING_WIDTH.saturating_sub(title.chars().count() + 1);
+                let mut spans: Vec<Span<'static>> = vec![Span::styled(" ".to_string(), style)];
+                spans.extend(
+                    self.spans
+                        .drain(..)
+                        .map(|s| Span::styled(s.content, style.patch(s.style))),
+                );
+                spans.push(Span::styled(" ".repeat(pad), style));
+                self.lines.push(Line::from(spans));
+            }
+            HeadingLevel::H2 => {
+                let title_style = Style::default()
+                    .fg(self.accent)
+                    .add_modifier(Modifier::BOLD);
+                let dim_style = Style::default().fg(self.fg_dim);
+                let prefix = "── ";
+                let suffix = " ";
+                let used = prefix.chars().count() + title.chars().count() + suffix.chars().count();
+                let fill = HEADING_WIDTH.saturating_sub(used);
+                let mut spans: Vec<Span<'static>> = vec![Span::styled(prefix, dim_style)];
+                spans.extend(
+                    self.spans
+                        .drain(..)
+                        .map(|s| Span::styled(s.content, title_style.patch(s.style))),
+                );
+                spans.push(Span::styled(suffix, dim_style));
+                spans.push(Span::styled("─".repeat(fill), dim_style));
+                self.lines.push(Line::from(spans));
+            }
+            _ => {
+                let (style, prefix) = self.heading_style(level);
+                let mut spans: Vec<Span<'static>> = vec![Span::raw(prefix)];
+                spans.extend(
+                    self.spans
+                        .drain(..)
+                        .map(|s| Span::styled(s.content, style.patch(s.style))),
+                );
+                self.lines.push(Line::from(spans));
+            }
+        }
+        self.push_blank();
+    }
+
+    // ── List helpers ───────────────────────────────────────────────────────────
+
+    fn start_list_item(&mut self) {
+        let depth = self.list_stack.len().saturating_sub(1);
+        let indent = "  ".repeat(depth);
+        let bullet = match self.list_stack.last_mut() {
+            Some(Some(n)) => {
+                let s = format!("{indent}{}. ", n);
+                *n += 1;
+                s
+            }
+            _ => format!("{indent}• "),
+        };
+        self.spans
+            .push(Span::styled(bullet, Style::default().fg(self.accent)));
+    }
+
+    // ── Inline formatting helpers ──────────────────────────────────────────────
+
+    fn handle_inline_code(&mut self, t: pulldown_cmark::CowStr) {
+        let s = t.into_string();
+        let span = Span::styled(
+            format!(" {} ", s),
+            Style::default().fg(self.code_fg).bg(self.code_span_bg),
+        );
+        if self.in_table {
+            self.table_cell_text.push_str(&s);
+            self.table_cell_spans.push(span);
+        } else {
+            self.spans.push(span);
+        }
+    }
+
+    fn handle_image(&mut self, dest_url: pulldown_cmark::CowStr) {
+        self.spans.push(Span::styled(
+            format!("[image: {}]", dest_url),
+            Style::default()
+                .fg(self.fg_dim)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    }
+
+    // ── Table helpers ──────────────────────────────────────────────────────────
+
+    fn start_table(&mut self) {
+        self.push_blank();
+        self.in_table = true;
+        self.in_table_header = false;
+        self.table_rows.clear();
+        self.table_current_row.clear();
+        self.table_cell_text.clear();
+        self.table_cell_spans.clear();
+    }
+
+    fn end_table(&mut self) {
+        self.in_table = false;
+        self.render_table();
+        self.push_blank();
+    }
+
+    fn handle_table_text(&mut self, t: pulldown_cmark::CowStr) {
+        let s = t.into_string();
+        self.table_cell_text.push_str(&s);
+        let mut style = Style::default();
+        if self.bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if self.italic {
+            style = style.add_modifier(Modifier::ITALIC);
+        }
+        if self.strikethrough {
+            style = style.add_modifier(Modifier::CROSSED_OUT);
+        }
+        if self.in_table_header {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        self.table_cell_spans.push(Span::styled(s, style));
+    }
+
+    // ── Rule and text helpers ──────────────────────────────────────────────────
+
+    fn handle_rule(&mut self) {
+        const RULE_WIDTH: usize = RENDER_WIDTH;
+        self.push_blank();
+        self.lines.push(Line::from(Span::styled(
+            "─".repeat(RULE_WIDTH),
+            Style::default().fg(self.fg_dim),
+        )));
+        self.push_blank();
+    }
+
+    fn handle_text(&mut self, t: pulldown_cmark::CowStr) {
+        let mut style = Style::default();
+        if self.bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if self.italic {
+            style = style.add_modifier(Modifier::ITALIC);
+        }
+        if self.strikethrough {
+            style = style.add_modifier(Modifier::CROSSED_OUT);
+        }
+        if self.blockquote_depth > 0 {
+            style = style.fg(self.quote).add_modifier(Modifier::ITALIC);
+        }
+        self.spans.push(Span::styled(t.into_string(), style));
     }
 
     fn heading_style(&self, level: HeadingLevel) -> (Style, &'static str) {

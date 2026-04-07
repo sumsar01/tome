@@ -244,7 +244,7 @@ impl App {
             return None;
         }
         let doc = self.db.find_doc(alias).ok()??;
-        if doc.source == "local" || doc.source == crate::db::SOURCE_INLINE {
+        if doc.source == crate::db::SOURCE_INLINE {
             return None; // inline — not on disk as a separate file
         }
         // Local-sourced docs have a path field
@@ -284,43 +284,15 @@ impl App {
         let alias = &self.reader_title;
         match self.db.find_doc(alias) {
             Ok(Some(doc)) => {
-                match doc.source.as_str() {
-                    crate::db::SOURCE_INLINE | "local" => {
-                        self.set_transient_status("No URL — this is a local/inline doc.".to_string());
-                    }
-                    source_name => {
-                        if let Some(scfg) = self.cfg.find_source(source_name) {
-                            let url = match scfg.kind {
-                                crate::config::SourceKind::Github => {
-                                    let repo = scfg.repo.as_deref().unwrap_or("");
-                                    let git_ref = scfg.git_ref.as_deref().unwrap_or("main");
-                                    let path = doc.path.as_deref().unwrap_or("");
-                                    format!("https://github.com/{}/blob/{}/{}", repo, git_ref, path)
-                                }
-                                crate::config::SourceKind::Confluence => {
-                                    let base = scfg.base_url.as_deref().unwrap_or("").trim_end_matches('/');
-                                    if let Some(ref page_id) = doc.page_id {
-                                        format!("{}/wiki/spaces/_/pages/{}", base, page_id)
-                                    } else {
-                                        doc.path.as_deref().map(|p| format!("{}/{}", base, p.trim_start_matches('/'))).unwrap_or_default()
-                                    }
-                                }
-                                _ => {
-                                    self.set_transient_status("No URL for this source type.".to_string());
-                                    return;
-                                }
-                            };
-                            #[cfg(target_os = "macos")]
-                            let _ = std::process::Command::new("open").arg(&url).spawn();
-                            #[cfg(target_os = "linux")]
-                            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
-                            #[cfg(target_os = "windows")]
-                            let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
-                            self.set_transient_status(format!("Opened {}", url));
+                match crate::source_url(&self.cfg, &doc) {
+                    Ok(url) => {
+                        if let Err(e) = crate::open_in_browser(&url) {
+                            self.set_transient_status(format!("{e}"));
                         } else {
-                            self.set_transient_status(format!("Source '{}' not found in config.", source_name));
+                            self.set_transient_status(format!("Opened {}", url));
                         }
                     }
+                    Err(e) => self.set_transient_status(format!("{e}")),
                 }
             }
             _ => self.set_transient_status("Doc not found.".to_string()),
@@ -347,6 +319,22 @@ impl App {
                 self.status.clear();
                 self.status_expires_at = None;
             }
+        }
+    }
+
+    /// Return a help-bar `Line` that shows the status message if one is active,
+    /// or the provided keybinding hints otherwise.
+    ///
+    /// This consolidates the identical `if !app.status.is_empty() { … } else { … }`
+    /// pattern shared by browser, reader, and history draw functions.
+    pub fn status_or_help<'a>(&self, theme: &'a super::theme::Theme, bindings: &[(&'a str, &'a str)]) -> ratatui::text::Line<'a> {
+        if !self.status.is_empty() {
+            ratatui::text::Line::from(vec![
+                ratatui::text::Span::raw("  "),
+                ratatui::text::Span::styled(self.status.clone(), theme.status_style()),
+            ])
+        } else {
+            theme.help_bar(bindings)
         }
     }
 }

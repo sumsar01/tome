@@ -118,7 +118,10 @@ async fn fetch_live(cfg: &Config, doc: &crate::db::DocRecord) -> Result<String> 
 
 /// Search across all docs: FTS5 content search for inline docs + fuzzy alias/tag match for all.
 /// Results are deduplicated and ranked: FTS5 hits first (by BM25), then fuzzy alias/tag hits.
+///
+/// `cfg` is reserved for future use (e.g. fetching remote doc snippets on demand).
 pub async fn search(cfg: &Config, db: &Db, query: &str) -> Result<Vec<SearchResult>> {
+    // cfg is not yet used; reserved for future remote-doc search integration
     let _ = cfg;
     let mut results: Vec<SearchResult> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();

@@ -8,6 +8,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+/// Percentage of screen width allocated to the doc list pane.
+const LIST_PANE_PCT: u16 = 35;
+/// Percentage of screen width allocated to the preview pane.
+const PREVIEW_PANE_PCT: u16 = 65;
+
 use super::app::App;
 use super::markdown::markdown_to_text;
 
@@ -60,8 +65,8 @@ pub fn draw(f: &mut Frame, app: &App) {
     let content = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(35), // doc list
-            Constraint::Percentage(65), // preview
+            Constraint::Percentage(LIST_PANE_PCT),    // doc list
+            Constraint::Percentage(PREVIEW_PANE_PCT), // preview
         ])
         .split(outer[1]);
 
@@ -93,11 +98,9 @@ pub fn draw(f: &mut Frame, app: &App) {
         ("q".to_string(), "Quit"),
     ];
 
+    let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
     let help_line = if !app.status.is_empty() {
-        Line::from(Span::styled(
-            format!("  {}", app.status),
-            theme.status_style(),
-        ))
+        app.status_or_help(theme, &refs)
     } else if app.filtering {
         theme.help_bar(&[
             ("Type", "Filter"),
@@ -105,7 +108,6 @@ pub fn draw(f: &mut Frame, app: &App) {
             ("Esc", "Cancel"),
         ])
     } else {
-        let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         theme.help_bar(&refs)
     };
 

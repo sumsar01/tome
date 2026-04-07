@@ -1,0 +1,254 @@
+use anyhow::Result;
+
+use crate::{config, db, sources};
+
+/// Width of the separator line used in tabular CLI output.
+const TABLE_SEPARATOR_WIDTH: usize = 60;
+
+/// `tome list` — print all registered doc aliases.
+pub fn list(db: &db::Db) -> Result<()> {
+    let docs = db.list_docs(None)?;
+    if docs.is_empty() {
+        eprintln!("No docs configured. Use `tome add` to add docs.");
+    } else {
+        println!("{:<24} {:<16} TAGS", "ALIAS", "SOURCE");
+        println!("{}", "-".repeat(TABLE_SEPARATOR_WIDTH));
+        for doc in docs {
+            println!(
+                "{:<24} {:<16} {}",
+                doc.alias,
+                doc.source,
+                doc.tags.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `tome get` — print doc content to stdout.
+pub async fn get(cfg: &config::Config, db: &db::Db, alias: &str, no_cache: bool) -> Result<()> {
+    let content = sources::fetch(cfg, db, alias, !no_cache).await?;
+    print!("{content}");
+    Ok(())
+}
+
+/// `tome search` — fuzzy search across all docs.
+pub async fn search(cfg: &config::Config, db: &db::Db, query: &str) -> Result<()> {
+    let results = sources::search(cfg, db, query).await?;
+    if results.is_empty() {
+        eprintln!("No results for '{query}'");
+    } else {
+        for r in results {
+            println!("{} — {}", r.alias, r.snippet);
+        }
+    }
+    Ok(())
+}
+
+/// `tome remove` — remove a registered doc.
+pub fn remove(db: &db::Db, alias: &str, force: bool) -> Result<()> {
+    if !db.alias_exists(alias) {
+        anyhow::bail!("No doc with alias '{}' found.", alias);
+    }
+    if !force {
+        eprint!("Remove '{alias}'? [y/N] ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+    db.remove_doc(alias)?;
+    println!("Removed '{alias}'.");
+    Ok(())
+}
+
+/// `tome refresh` — re-fetch a doc and refresh its cache.
+pub async fn refresh(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<()> {
+    if !db.alias_exists(alias) {
+        anyhow::bail!("No doc with alias '{}' found.", alias);
+    }
+    crate::cache::invalidate(alias)?;
+    let content = sources::fetch(cfg, db, alias, false).await?;
+    println!("Refreshed '{alias}' ({} bytes).", content.len());
+    Ok(())
+}
+
+/// `tome open` — open the source URL for a doc in the default browser.
+pub fn open(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<()> {
+    let doc = db.find_doc(alias)?
+        .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
+    let url = crate::source_url(cfg, &doc)?;
+    crate::open_in_browser(&url)?;
+    println!("Opening {url}");
+    Ok(())
+}
+
+/// `tome export` — export all docs to stdout.
+pub fn export(db: &db::Db, format: &str) -> Result<()> {
+    let docs = db.list_docs(None)?;
+    match format {
+        "json" => {
+            let mut records = Vec::new();
+            for info in &docs {
+                if let Ok(Some(doc)) = db.find_doc(&info.alias) {
+                    records.push(serde_json::json!({
+                        "alias": doc.alias,
+                        "source": doc.source,
+                        "page_id": doc.page_id,
+                        "path": doc.path,
+                        "tags": doc.tags,
+                        "content": doc.content,
+                    }));
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        "markdown" => {
+            for info in &docs {
+                if let Ok(Some(doc)) = db.find_doc(&info.alias) {
+                    println!("# {}", doc.alias);
+                    println!("<!-- source: {} | tags: {} -->", doc.source, doc.tags.join(", "));
+                    println!();
+                    if let Some(content) = &doc.content {
+                        println!("{}", content);
+                    } else {
+                        println!("_(remote doc — run `tome get {}` to fetch content)_", doc.alias);
+                    }
+                    println!("\n---\n");
+                }
+            }
+        }
+        other => {
+            anyhow::bail!("Unknown format '{other}'. Use 'json' or 'markdown'.");
+        }
+    }
+    Ok(())
+}
+
+/// `tome tag` — add a tag to an existing doc.
+pub fn tag(db: &db::Db, alias: &str, tag: &str) -> Result<()> {
+    let doc = db.find_doc(alias)?
+        .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
+    let mut tags = doc.tags.clone();
+    let tag = tag.trim().to_string();
+    if tags.contains(&tag) {
+        eprintln!("Tag '{}' already present on '{}'.", tag, alias);
+    } else {
+        tags.push(tag.clone());
+        db.update_tags(alias, &tags)?;
+        println!("Added tag '{}' to '{}'.", tag, alias);
+    }
+    Ok(())
+}
+
+/// `tome untag` — remove a tag from an existing doc.
+pub fn untag(db: &db::Db, alias: &str, tag: &str) -> Result<()> {
+    let doc = db.find_doc(alias)?
+        .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
+    let original_len = doc.tags.len();
+    let tags: Vec<String> = doc.tags.into_iter().filter(|t| t != tag).collect();
+    if tags.len() == original_len {
+        anyhow::bail!("Tag '{}' not found on '{}'.", tag, alias);
+    }
+    db.update_tags(alias, &tags)?;
+    println!("Removed tag '{}' from '{}'.", tag, alias);
+    Ok(())
+}
+
+/// `tome history` — show fetch history for a doc.
+pub fn history(db: &db::Db, alias: &str) -> Result<()> {
+    let versions = db.list_versions(alias)?;
+    if versions.is_empty() {
+        eprintln!("No history for '{alias}'. Fetch the doc at least once with `tome get` or `tome refresh`.");
+    } else {
+        println!("{:<4} {:<28} {:<10} ALIAS", "#", "FETCHED AT", "HASH");
+        println!("{}", "-".repeat(TABLE_SEPARATOR_WIDTH));
+        for v in &versions {
+            println!("{:<4} {:<28} {:<10} {}", v.version, v.fetched_at, v.content_hash, v.alias);
+        }
+    }
+    Ok(())
+}
+
+/// `tome diff` — show a diff between two versions of a doc.
+pub fn diff(db: &db::Db, alias: &str, v1: usize, v2: usize) -> Result<()> {
+    let versions = db.list_versions(alias)?;
+    if versions.len() < 2 {
+        anyhow::bail!("Need at least 2 versions to diff. Run `tome refresh {alias}` to fetch a new version.");
+    }
+    // 0 means "use default": v1 = second-to-last, v2 = last
+    let idx1 = if v1 == 0 { versions.len() - 2 } else { v1 - 1 };
+    let idx2 = if v2 == 0 { versions.len() - 1 } else { v2 - 1 };
+    let a = versions.get(idx1).ok_or_else(|| anyhow::anyhow!("Version {} not found", idx1 + 1))?;
+    let b = versions.get(idx2).ok_or_else(|| anyhow::anyhow!("Version {} not found", idx2 + 1))?;
+    println!("--- {} v{} ({})", alias, a.version, a.fetched_at);
+    println!("+++ {} v{} ({})", alias, b.version, b.fetched_at);
+    println!();
+    print!("{}", crate::util::diff::unified_diff(&a.content, &b.content));
+    Ok(())
+}
+
+/// `tome add` — save a local markdown file or URL as an inline doc.
+pub async fn add(
+    db: &db::Db,
+    alias: &str,
+    file: Option<String>,
+    url: Option<String>,
+    tags: Option<String>,
+) -> Result<()> {
+    let tags_vec: Vec<String> = tags
+        .unwrap_or_default()
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    let content = if let Some(path) = file {
+        std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file '{path}': {e}"))?
+    } else if let Some(ref u) = url {
+        fetch_url(u).await?
+    } else {
+        anyhow::bail!("Provide either --file <path> or --url <url>");
+    };
+
+    let final_tags = if tags_vec.is_empty() {
+        crate::mcp::infer_tags(&content)
+    } else {
+        tags_vec
+    };
+
+    db.add_doc(&db::DocRecord {
+        alias: alias.to_string(),
+        source: db::SOURCE_INLINE.to_string(),
+        page_id: None,
+        path: None,
+        tags: final_tags.clone(),
+        content: Some(content),
+    })?;
+    println!(
+        "Saved '{}' with tags: {}",
+        alias,
+        if final_tags.is_empty() { "(none)".to_string() } else { final_tags.join(", ") }
+    );
+    Ok(())
+}
+
+/// Fetch a URL and return its content as markdown (best-effort).
+async fn fetch_url(url: &str) -> Result<String> {
+    let client = crate::http::build_http_client()?;
+    let resp = client.get(url).send().await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch '{url}': {e}"))?;
+    if !resp.status().is_success() {
+        anyhow::bail!("HTTP {} fetching '{url}'", resp.status());
+    }
+    let text = resp.text().await?;
+    // If it looks like HTML, convert to markdown; otherwise return as-is
+    if text.trim_start().starts_with('<') {
+        Ok(crate::util::html::html_to_markdown(&text))
+    } else {
+        Ok(text)
+    }
+}

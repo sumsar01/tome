@@ -34,15 +34,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             ("q/Esc", "Back"),
         ]
     };
-    let help_line = if !app.status.is_empty() {
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(app.status.clone(), theme.status_style()),
-        ])
-    } else {
-        theme.help_bar(&bindings)
-    };
-    f.render_widget(Paragraph::new(help_line), help_area);
+    f.render_widget(Paragraph::new(app.status_or_help(theme, &bindings)), help_area);
 
     if let Some(ref diff) = app.diff_content.clone() {
         // Show diff pane
@@ -110,46 +102,43 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
 // ── Key handling ──────────────────────────────────────────────────────────────
 
+/// Number of lines scrolled by PageDown / PageUp.
+const PAGE_SCROLL_STEP: u16 = 20;
+
 pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    use crate::config::KeysConfig;
+    let keys = &app.cfg.ui.keys;
+    let k_down = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
+    let k_up   = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
+
+    let code = key.code;
+
     if app.diff_content.is_some() {
         // In diff view
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                app.reader_scroll = app.reader_scroll.saturating_add(1);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                app.reader_scroll = app.reader_scroll.saturating_sub(1);
-            }
-            KeyCode::PageDown => {
-                app.reader_scroll = app.reader_scroll.saturating_add(20);
-            }
-            KeyCode::PageUp => {
-                app.reader_scroll = app.reader_scroll.saturating_sub(20);
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                app.diff_content = None;
-                app.reader_scroll = 0;
-            }
-            _ => {}
+        if code == k_down || code == KeyCode::Down {
+            app.reader_scroll = app.reader_scroll.saturating_add(1);
+        } else if code == k_up || code == KeyCode::Up {
+            app.reader_scroll = app.reader_scroll.saturating_sub(1);
+        } else if code == KeyCode::PageDown {
+            app.reader_scroll = app.reader_scroll.saturating_add(PAGE_SCROLL_STEP);
+        } else if code == KeyCode::PageUp {
+            app.reader_scroll = app.reader_scroll.saturating_sub(PAGE_SCROLL_STEP);
+        } else if code == KeyCode::Esc || code == KeyCode::Char('q') {
+            app.diff_content = None;
+            app.reader_scroll = 0;
         }
     } else {
         // In history list view
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                let max = app.history_entries.len().saturating_sub(1);
-                app.history_selected = (app.history_selected + 1).min(max);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                app.history_selected = app.history_selected.saturating_sub(1);
-            }
-            KeyCode::Char('d') | KeyCode::Enter => {
-                app.reader_scroll = 0;
-                app.show_diff_for_selected();
-            }
-            KeyCode::Char('q') | KeyCode::Esc => {
-                app.go_back();
-            }
-            _ => {}
+        if code == k_down || code == KeyCode::Down {
+            let max = app.history_entries.len().saturating_sub(1);
+            app.history_selected = (app.history_selected + 1).min(max);
+        } else if code == k_up || code == KeyCode::Up {
+            app.history_selected = app.history_selected.saturating_sub(1);
+        } else if code == KeyCode::Char('d') || code == KeyCode::Enter {
+            app.reader_scroll = 0;
+            app.show_diff_for_selected();
+        } else if code == KeyCode::Char('q') || code == KeyCode::Esc {
+            app.go_back();
         }
     }
     Ok(())

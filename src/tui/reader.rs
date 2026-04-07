@@ -45,19 +45,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     owned_keys.push((k.cycle_theme.clone(), "Theme"));
     owned_keys.push(("q/Esc".to_string(), "Back"));
 
-    let help_line = if !app.status.is_empty() {
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                app.status.clone(),
-                theme.status_style(),
-            ),
-        ])
-    } else {
-        let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-        theme.help_bar(&refs)
-    };
-    f.render_widget(Paragraph::new(help_line), help_area);
+    let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    f.render_widget(Paragraph::new(app.status_or_help(theme, &refs)), help_area);
 
     // ── Metadata info overlay ─────────────────────────────────────────────────
     if app.show_info {
@@ -284,6 +273,9 @@ fn draw_scrollbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
 // ── Key handling ──────────────────────────────────────────────────────────────
 
+/// Number of lines scrolled by PageDown / PageUp.
+const PAGE_SCROLL_STEP: u16 = 20;
+
 pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use crate::config::KeysConfig;
     let keys = &app.cfg.ui.keys;
@@ -305,9 +297,9 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     } else if code == k_up || code == KeyCode::Up {
         app.reader_scroll = app.reader_scroll.saturating_sub(1);
     } else if code == KeyCode::PageDown {
-        app.reader_scroll = app.reader_scroll.saturating_add(20);
+        app.reader_scroll = app.reader_scroll.saturating_add(PAGE_SCROLL_STEP);
     } else if code == KeyCode::PageUp {
-        app.reader_scroll = app.reader_scroll.saturating_sub(20);
+        app.reader_scroll = app.reader_scroll.saturating_sub(PAGE_SCROLL_STEP);
     } else if code == k_toc {
         app.toc_visible = !app.toc_visible;
     } else if code == k_copy {

@@ -242,66 +242,12 @@ pub fn unified_diff_string_pub(alias: &str, a: &crate::db::DocVersion, b: &crate
 
 /// Build a unified diff string between two DocVersions.
 fn unified_diff_string(alias: &str, a: &crate::db::DocVersion, b: &crate::db::DocVersion) -> String {
-    let mut out = format!(
+    let header = format!(
         "--- {} v{} ({})\n+++ {} v{} ({})\n\n",
         alias, a.version, a.fetched_at,
         alias, b.version, b.fetched_at
     );
-
-    let a_lines: Vec<&str> = a.content.lines().collect();
-    let b_lines: Vec<&str> = b.content.lines().collect();
-    let m = a_lines.len();
-    let n = b_lines.len();
-
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for i in 1..=m {
-        for j in 1..=n {
-            if a_lines[i - 1] == b_lines[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
-            }
-        }
-    }
-
-    let mut ops: Vec<(char, &str)> = Vec::new();
-    let (mut i, mut j) = (m, n);
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && a_lines[i - 1] == b_lines[j - 1] {
-            ops.push(('=', a_lines[i - 1]));
-            i -= 1; j -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            ops.push(('+', b_lines[j - 1]));
-            j -= 1;
-        } else {
-            ops.push(('-', a_lines[i - 1]));
-            i -= 1;
-        }
-    }
-    ops.reverse();
-
-    const CTX: usize = 3;
-    let changed: Vec<bool> = ops.iter().map(|(op, _)| *op != '=').collect();
-    let mut printed = vec![false; ops.len()];
-    for (k, changed_k) in changed.iter().enumerate() {
-        if *changed_k {
-            let start = k.saturating_sub(CTX);
-            let end = (k + CTX + 1).min(ops.len());
-            for p in printed.iter_mut().take(end).skip(start) { *p = true; }
-        }
-    }
-
-    let mut last: Option<usize> = None;
-    for (k, (op, line)) in ops.iter().enumerate() {
-        if !printed[k] { continue; }
-        if let Some(l) = last { if k > l + 1 { out.push_str("@@ ... @@\n"); } }
-        let prefix = match op { '-' => "-", '+' => "+", _ => " " };
-        out.push_str(&format!("{}{}\n", prefix, line));
-        last = Some(k);
-    }
-
-    if last.is_none() { out.push_str("(no differences)\n"); }
-    out
+    header + &crate::util::diff::unified_diff(&a.content, &b.content)
 }
 
 /// Infer tags from markdown headings (H1/H2), slugified and capped at 5.

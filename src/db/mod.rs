@@ -16,6 +16,15 @@ use crate::paths;
 /// Source name used for docs whose content is stored directly in the DB.
 pub const SOURCE_INLINE: &str = "inline";
 
+/// Maximum number of FTS5 search results to return.
+const MAX_SEARCH_RESULTS: usize = 20;
+
+/// FNV-1a 64-bit offset basis.
+const FNV_OFFSET_BASIS: u64 = 14695981039346656037;
+
+/// FNV-1a 64-bit prime.
+const FNV_PRIME: u64 = 1099511628211;
+
 /// A registered doc entry.
 #[derive(Debug, Clone)]
 pub struct DocRecord {
@@ -341,9 +350,9 @@ impl Db {
              FROM docs_fts
              WHERE docs_fts MATCH ?1
              ORDER BY bm25(docs_fts) ASC
-             LIMIT 20",
+             LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![query], |row| {
+        let rows = stmt.query_map(params![query, MAX_SEARCH_RESULTS as i64], |row| {
             Ok(SearchResult {
                 alias: row.get(0)?,
                 snippet: row.get(1)?,
@@ -376,10 +385,10 @@ fn row_to_doc(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocRecord> {
 /// Compute the first 8 hex chars of a FNV-1a hash of `content` — fast and
 /// collision-resistant enough to detect content changes between fetches.
 pub fn content_hash(content: &str) -> String {
-    let mut h: u64 = 14695981039346656037;
+    let mut h: u64 = FNV_OFFSET_BASIS;
     for byte in content.as_bytes() {
         h ^= *byte as u64;
-        h = h.wrapping_mul(1099511628211);
+        h = h.wrapping_mul(FNV_PRIME);
     }
     format!("{:016x}", h)[..8].to_string()
 }

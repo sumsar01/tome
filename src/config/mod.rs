@@ -21,6 +21,10 @@ pub struct Config {
     /// Legacy [[docs]] entries — read during migration only, then removed from disk.
     #[serde(default, skip_serializing)]
     pub docs: Vec<DocConfig>,
+    /// Path from which this config was loaded. Used when rewriting the file.
+    /// Not serialised — set programmatically by `load_from`.
+    #[serde(skip)]
+    pub loaded_from: PathBuf,
 }
 
 /// UI / appearance settings.
@@ -249,6 +253,8 @@ impl Config {
             .validate()
             .with_context(|| format!("Invalid keybinding in {}", path.display()))?;
 
+        let mut cfg = cfg;
+        cfg.loaded_from = path.clone();
         Ok(cfg)
     }
 
@@ -312,7 +318,7 @@ impl Config {
 
             match db.add_doc(&record) {
                 Ok(()) => {}
-                Err(e) if e.to_string().contains("already exists") => {
+                Err(_) if db.alias_exists(&doc.alias) => {
                     // Already in DB — skip silently
                 }
                 Err(e) => {
@@ -356,7 +362,12 @@ impl Config {
 
         let header = "# tome configuration\n# Docs registry has moved to tome.db\n# Sources and cache settings only.\n\n";
         let body = toml::to_string_pretty(&clean).context("Failed to serialise config")?;
-        let path = config_path();
+        // Use the path from which this config was loaded (respects --config and --profile flags).
+        let path = if self.loaded_from.as_os_str().is_empty() {
+            config_path()
+        } else {
+            self.loaded_from.clone()
+        };
         std::fs::write(&path, format!("{header}{body}"))
             .with_context(|| format!("Failed to write config: {}", path.display()))?;
         Ok(())
