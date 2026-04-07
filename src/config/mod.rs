@@ -30,18 +30,111 @@ pub struct UiConfig {
     /// Valid values: dark | light | catppuccin | gruvbox | nord | solarized-dark
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Keybinding overrides. Any omitted action keeps its default key.
+    #[serde(default)]
+    pub keys: KeysConfig,
 }
 
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            keys: KeysConfig::default(),
         }
     }
 }
 
 fn default_theme() -> String {
     "dark".to_string()
+}
+
+/// Keybinding configuration for TUI actions.
+///
+/// Each field is a single character string (e.g. `"j"`) or a special key name
+/// (`"up"`, `"down"`, `"pageup"`, `"pagedown"`, `"enter"`, `"esc"`, `"backspace"`).
+/// Invalid values produce a clear error at startup.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KeysConfig {
+    // Reader keys
+    pub scroll_down: String,
+    pub scroll_up: String,
+    pub toggle_toc: String,
+    pub copy: String,
+    pub history: String,
+    pub open_url: String,
+    pub info: String,
+    pub cycle_theme: String,
+    // Browser keys
+    pub filter: String,
+    pub navigate_down: String,
+    pub navigate_up: String,
+}
+
+impl Default for KeysConfig {
+    fn default() -> Self {
+        Self {
+            scroll_down: "j".to_string(),
+            scroll_up: "k".to_string(),
+            toggle_toc: "t".to_string(),
+            copy: "y".to_string(),
+            history: "h".to_string(),
+            open_url: "o".to_string(),
+            info: "i".to_string(),
+            cycle_theme: "T".to_string(),
+            filter: "/".to_string(),
+            navigate_down: "j".to_string(),
+            navigate_up: "k".to_string(),
+        }
+    }
+}
+
+impl KeysConfig {
+    /// Parse a key string into a crossterm `KeyCode`.
+    /// Returns an error with a clear message if the string is unrecognised.
+    pub fn parse_key(s: &str) -> anyhow::Result<crossterm::event::KeyCode> {
+        use crossterm::event::KeyCode;
+        match s {
+            "up" => Ok(KeyCode::Up),
+            "down" => Ok(KeyCode::Down),
+            "pageup" | "pgup" => Ok(KeyCode::PageUp),
+            "pagedown" | "pgdn" => Ok(KeyCode::PageDown),
+            "enter" => Ok(KeyCode::Enter),
+            "esc" | "escape" => Ok(KeyCode::Esc),
+            "backspace" => Ok(KeyCode::Backspace),
+            "tab" => Ok(KeyCode::Tab),
+            "home" => Ok(KeyCode::Home),
+            "end" => Ok(KeyCode::End),
+            "delete" | "del" => Ok(KeyCode::Delete),
+            s if s.chars().count() == 1 => Ok(KeyCode::Char(s.chars().next().unwrap())),
+            other => anyhow::bail!(
+                "Unknown key '{}' in [ui.keys] config. Use a single character or one of: \
+                 up, down, pageup, pagedown, enter, esc, backspace, tab, home, end, delete",
+                other
+            ),
+        }
+    }
+
+    /// Validate all key strings in this config, returning the first error found.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let fields = [
+            ("scroll_down", &self.scroll_down),
+            ("scroll_up", &self.scroll_up),
+            ("toggle_toc", &self.toggle_toc),
+            ("copy", &self.copy),
+            ("history", &self.history),
+            ("open_url", &self.open_url),
+            ("info", &self.info),
+            ("cycle_theme", &self.cycle_theme),
+            ("filter", &self.filter),
+            ("navigate_down", &self.navigate_down),
+            ("navigate_up", &self.navigate_up),
+        ];
+        for (name, val) in &fields {
+            Self::parse_key(val).map_err(|e| anyhow::anyhow!("[ui.keys].{}: {}", name, e))?;
+        }
+        Ok(())
+    }
 }
 
 /// A named source (GitHub repo, Confluence space, local directory)
@@ -139,6 +232,12 @@ impl Config {
 
         let cfg: Config = toml::from_str(&content)
             .with_context(|| format!("Failed to parse config: {}", path.display()))?;
+
+        // Validate keybindings at load time so users get a clear error immediately.
+        cfg.ui
+            .keys
+            .validate()
+            .with_context(|| format!("Invalid keybinding in {}", path.display()))?;
 
         Ok(cfg)
     }
@@ -278,6 +377,23 @@ ttl_seconds = 3600  # 1 hour
 # Built-in themes: dark | light | catppuccin | gruvbox | nord | solarized-dark
 # Press T in the TUI to cycle through themes at runtime.
 theme = "dark"
+
+# Keybinding overrides (optional). Use a single character or: up, down, pageup,
+# pagedown, enter, esc, backspace, tab, home, end, delete.
+# Defaults shown below — uncomment and change to remap.
+#
+# [ui.keys]
+# scroll_down   = "j"
+# scroll_up     = "k"
+# toggle_toc    = "t"
+# copy          = "y"
+# history       = "h"
+# open_url      = "o"
+# info          = "i"
+# cycle_theme   = "T"
+# filter        = "/"
+# navigate_down = "j"
+# navigate_up   = "k"
 
 # --- Sources ---
 # Define named sources to reference when adding docs.

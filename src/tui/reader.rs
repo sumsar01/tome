@@ -27,6 +27,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let help_area = vertical[1];
 
     // ── Help bar ─────────────────────────────────────────────────────────────
+    let k = &app.cfg.ui.keys;
+    let scroll_label = format!("{}/{}", k.scroll_down, k.scroll_up);
+    let toc_action = if app.toc_visible { "Hide ToC" } else { "Show ToC" };
+    // Build owned key strings so they live long enough for help_bar borrows
+    let mut owned_keys: Vec<(String, &str)> = vec![
+        (scroll_label, "Scroll"),
+        ("PgDn/PgUp".to_string(), "Page"),
+    ];
+    if !app.toc.is_empty() {
+        owned_keys.push((k.toggle_toc.clone(), toc_action));
+    }
+    owned_keys.push((k.copy.clone(), "Copy"));
+    owned_keys.push((k.history.clone(), "History"));
+    owned_keys.push((k.open_url.clone(), "Open URL"));
+    owned_keys.push((k.info.clone(), "Info"));
+    owned_keys.push((k.cycle_theme.clone(), "Theme"));
+    owned_keys.push(("q/Esc".to_string(), "Back"));
+
     let help_line = if !app.status.is_empty() {
         Line::from(vec![
             Span::raw("  "),
@@ -36,21 +54,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             ),
         ])
     } else {
-        let mut bindings: Vec<(&str, &str)> = vec![("j/k", "Scroll"), ("PgDn/PgUp", "Page")];
-        if !app.toc.is_empty() {
-            if app.toc_visible {
-                bindings.push(("t", "Hide ToC"));
-            } else {
-                bindings.push(("t", "Show ToC"));
-            }
-        }
-        bindings.push(("y", "Copy"));
-        bindings.push(("h", "History"));
-        bindings.push(("o", "Open URL"));
-        bindings.push(("i", "Info"));
-        bindings.push(("T", "Theme"));
-        bindings.push(("q/Esc", "Back"));
-        theme.help_bar(&bindings)
+        let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        theme.help_bar(&refs)
     };
     f.render_widget(Paragraph::new(help_line), help_area);
 
@@ -280,49 +285,51 @@ fn draw_scrollbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 // ── Key handling ──────────────────────────────────────────────────────────────
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.reader_scroll = app.reader_scroll.saturating_add(1);
+    use crate::config::KeysConfig;
+    let keys = &app.cfg.ui.keys;
+
+    // Resolve configured key codes (errors impossible here — validated at startup)
+    let k_down       = KeysConfig::parse_key(&keys.scroll_down).unwrap_or(KeyCode::Char('j'));
+    let k_up         = KeysConfig::parse_key(&keys.scroll_up).unwrap_or(KeyCode::Char('k'));
+    let k_toc        = KeysConfig::parse_key(&keys.toggle_toc).unwrap_or(KeyCode::Char('t'));
+    let k_copy       = KeysConfig::parse_key(&keys.copy).unwrap_or(KeyCode::Char('y'));
+    let k_history    = KeysConfig::parse_key(&keys.history).unwrap_or(KeyCode::Char('h'));
+    let k_open       = KeysConfig::parse_key(&keys.open_url).unwrap_or(KeyCode::Char('o'));
+    let k_info       = KeysConfig::parse_key(&keys.info).unwrap_or(KeyCode::Char('i'));
+    let k_theme      = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+
+    let code = key.code;
+
+    if code == k_down || code == KeyCode::Down {
+        app.reader_scroll = app.reader_scroll.saturating_add(1);
+    } else if code == k_up || code == KeyCode::Up {
+        app.reader_scroll = app.reader_scroll.saturating_sub(1);
+    } else if code == KeyCode::PageDown {
+        app.reader_scroll = app.reader_scroll.saturating_add(20);
+    } else if code == KeyCode::PageUp {
+        app.reader_scroll = app.reader_scroll.saturating_sub(20);
+    } else if code == k_toc {
+        app.toc_visible = !app.toc_visible;
+    } else if code == k_copy {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_text(app.reader_content.clone());
+            app.set_transient_status("Copied to clipboard!".to_string());
         }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.reader_scroll = app.reader_scroll.saturating_sub(1);
+    } else if code == k_history {
+        app.open_history();
+    } else if code == k_open {
+        app.open_source_in_browser();
+    } else if code == k_info {
+        app.show_info = !app.show_info;
+    } else if code == k_theme {
+        app.cycle_theme();
+    } else if code == KeyCode::Char('q') || code == KeyCode::Esc {
+        if app.show_info {
+            app.show_info = false;
+        } else {
+            app.status.clear();
+            app.go_back();
         }
-        KeyCode::PageDown => {
-            app.reader_scroll = app.reader_scroll.saturating_add(20);
-        }
-        KeyCode::PageUp => {
-            app.reader_scroll = app.reader_scroll.saturating_sub(20);
-        }
-        KeyCode::Char('t') => {
-            app.toc_visible = !app.toc_visible;
-        }
-        KeyCode::Char('y') => {
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                let _ = clipboard.set_text(app.reader_content.clone());
-                app.set_transient_status("Copied to clipboard!".to_string());
-            }
-        }
-        KeyCode::Char('h') => {
-            app.open_history();
-        }
-        KeyCode::Char('o') => {
-            app.open_source_in_browser();
-        }
-        KeyCode::Char('i') => {
-            app.show_info = !app.show_info;
-        }
-        KeyCode::Char('T') => {
-            app.cycle_theme();
-        }
-        KeyCode::Char('q') | KeyCode::Esc => {
-            if app.show_info {
-                app.show_info = false;
-            } else {
-                app.status.clear();
-                app.go_back();
-            }
-        }
-        _ => {}
     }
     Ok(())
 }

@@ -83,6 +83,16 @@ pub fn draw(f: &mut Frame, app: &App) {
     );
 
     // ── Help / status bar ───────────────────────────────────────────────────
+    let k = &app.cfg.ui.keys;
+    let nav_label = format!("{}/{}", k.navigate_down, k.navigate_up);
+    let owned_keys: Vec<(String, &str)> = vec![
+        (nav_label, "Navigate"),
+        ("Enter".to_string(), "Open"),
+        (k.filter.clone(), "Filter"),
+        (k.cycle_theme.clone(), "Theme"),
+        ("q".to_string(), "Quit"),
+    ];
+
     let help_line = if !app.status.is_empty() {
         Line::from(Span::styled(
             format!("  {}", app.status),
@@ -95,13 +105,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             ("Esc", "Cancel"),
         ])
     } else {
-        theme.help_bar(&[
-            ("j/k", "Navigate"),
-            ("Enter", "Open"),
-            ("/", "Filter"),
-            ("T", "Theme"),
-            ("q", "Quit"),
-        ])
+        let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        theme.help_bar(&refs)
     };
 
     f.render_widget(Paragraph::new(help_line), outer[3]);
@@ -205,6 +210,14 @@ fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 // ── Key handling ──────────────────────────────────────────────────────────────
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    use crate::config::KeysConfig;
+    let keys = &app.cfg.ui.keys;
+
+    let k_down   = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
+    let k_up     = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
+    let k_filter = KeysConfig::parse_key(&keys.filter).unwrap_or(KeyCode::Char('/'));
+    let k_theme  = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+
     if app.filtering {
         match key.code {
             KeyCode::Esc => {
@@ -232,40 +245,33 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
     let aliases = app.filtered_aliases();
     let count = aliases.len();
+    let code = key.code;
 
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if count > 0 {
-                app.selected = (app.selected + 1).min(count - 1);
-                app.load_preview().await?;
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.selected = app.selected.saturating_sub(1);
+    if code == k_down || code == KeyCode::Down {
+        if count > 0 {
+            app.selected = (app.selected + 1).min(count - 1);
             app.load_preview().await?;
         }
-        KeyCode::Char('/') => {
-            app.filtering = true;
+    } else if code == k_up || code == KeyCode::Up {
+        app.selected = app.selected.saturating_sub(1);
+        app.load_preview().await?;
+    } else if code == k_filter {
+        app.filtering = true;
+        app.filter.clear();
+    } else if code == KeyCode::Esc {
+        if !app.filter.is_empty() {
             app.filter.clear();
+            app.selected = 0;
+            app.load_preview().await?;
         }
-        KeyCode::Esc => {
-            if !app.filter.is_empty() {
-                app.filter.clear();
-                app.selected = 0;
-                app.load_preview().await?;
-            }
+    } else if code == KeyCode::Enter {
+        let aliases = app.filtered_aliases();
+        if let Some(alias) = aliases.get(app.selected) {
+            let alias = alias.to_string();
+            app.open_doc(&alias).await?;
         }
-        KeyCode::Enter => {
-            let aliases = app.filtered_aliases();
-            if let Some(alias) = aliases.get(app.selected) {
-                let alias = alias.to_string();
-                app.open_doc(&alias).await?;
-            }
-        }
-        KeyCode::Char('T') => {
-            app.cycle_theme();
-        }
-        _ => {}
+    } else if code == k_theme {
+        app.cycle_theme();
     }
 
     Ok(())
