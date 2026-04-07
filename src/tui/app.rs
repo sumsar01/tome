@@ -230,6 +230,52 @@ impl App {
         self.diff_content = Some(crate::mcp::unified_diff_string_pub(&self.reader_title, a, b));
     }
 
+    /// Return the filesystem path for the currently displayed doc if it is local,
+    /// so the TUI event loop can set up a file watcher.
+    pub fn current_local_path(&self) -> Option<String> {
+        let alias = match self.screen {
+            Screen::Reader | Screen::History => &self.reader_title,
+            Screen::Browser => self.preview_alias.as_deref().unwrap_or(""),
+        };
+        if alias.is_empty() {
+            return None;
+        }
+        let doc = self.db.find_doc(alias).ok()??;
+        if doc.source == "local" || doc.source == crate::db::SOURCE_INLINE {
+            return None; // inline — not on disk as a separate file
+        }
+        // Local-sourced docs have a path field
+        if doc.source == "local" {
+            return doc.path;
+        }
+        // For local source with path configured via SourceConfig.root + doc.path
+        if self.cfg.find_source(&doc.source).map(|s| s.kind == crate::config::SourceKind::Local).unwrap_or(false) {
+            if let Some(root) = self.cfg.find_source(&doc.source).and_then(|s| s.root.as_deref()) {
+                return Some(format!("{}/{}", root.trim_end_matches('/'), doc.path.unwrap_or_default()));
+            }
+        }
+        None
+    }
+
+    /// Reload the current doc content from disk (called on file-system change event).
+    pub async fn reload_current_local(&mut self) {
+        match self.screen {
+            Screen::Browser => {
+                // Force preview re-fetch
+                self.preview_alias = None;
+                let _ = self.load_preview().await;
+            }
+            Screen::Reader | Screen::History => {
+                let alias = self.reader_title.clone();
+                if let Ok(content) = sources::fetch(&self.cfg, &self.db, &alias, false).await {
+                    self.toc = super::markdown::extract_headings(&content);
+                    self.reader_content = content;
+                    self.set_transient_status("Reloaded.".to_string());
+                }
+            }
+        }
+    }
+
     /// Advance to the next theme in the rotation cycle.
     pub fn cycle_theme(&mut self) {
         self.theme_name = self.theme_name.next();

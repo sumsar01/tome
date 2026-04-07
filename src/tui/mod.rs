@@ -11,8 +11,10 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use notify::{Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
+use std::sync::mpsc;
 
 use crate::config::Config;
 use crate::db::Db;
@@ -49,7 +51,11 @@ async fn run_terminal(app: &mut App) -> Result<()> {
     }));
     let _ = result; // The hook handles the panic case.
 
-    let run_result = run_loop(&mut terminal, app).await;
+    // Set up file-watch channel; the watcher is kept alive until we drop it at end.
+    let (fs_tx, fs_rx) = mpsc::channel::<String>();
+    let _watcher = setup_watcher(fs_tx);
+
+    let run_result = run_loop(&mut terminal, app, &fs_rx).await;
 
     // Always restore — whether we returned normally or are about to propagate an error.
     let _ = disable_raw_mode();
@@ -63,15 +69,60 @@ async fn run_terminal(app: &mut App) -> Result<()> {
     run_result
 }
 
+/// Set up a notify watcher that sends changed file paths over `tx`.
+/// Returns the watcher so it stays alive for the duration of the TUI.
+fn setup_watcher(tx: mpsc::Sender<String>) -> Option<RecommendedWatcher> {
+    let mut watcher = RecommendedWatcher::new(
+        move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                    for path in event.paths {
+                        let _ = tx.send(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        },
+        NotifyConfig::default(),
+    )
+    .ok()?;
+
+    // Watch the user's home dir non-recursively just to have the watcher alive;
+    // actual paths are registered dynamically per-doc in the loop.
+    // (RecommendedWatcher requires at least one path initially in some impls —
+    // so we watch a guaranteed-existing path with a no-op effect.)
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let _ = watcher.watch(&home, RecursiveMode::NonRecursive);
+    Some(watcher)
+}
+
 async fn run_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
+    fs_rx: &mpsc::Receiver<String>,
 ) -> Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
+    let mut watched_path: Option<String> = None;
+
     loop {
         app.tick_status();
+
+        // Update the file watcher if the preview/reader is showing a local file
+        // and we haven't registered that path yet.
+        let local_path = app.current_local_path();
+        if local_path != watched_path {
+            watched_path = local_path;
+        }
+
+        // Check for file-system change events
+        while let Ok(changed_path) = fs_rx.try_recv() {
+            if let Some(ref wp) = watched_path {
+                if changed_path.contains(wp.as_str()) || wp.contains(changed_path.as_str()) {
+                    app.reload_current_local().await;
+                }
+            }
+        }
 
         terminal.draw(|f| match app.screen {
             Screen::Browser => browser::draw(f, app),
