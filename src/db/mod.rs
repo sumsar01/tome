@@ -42,7 +42,6 @@ pub struct DocInfo {
 
 /// A search result
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SearchResult {
     pub alias: String,
     pub snippet: String,
@@ -243,7 +242,6 @@ impl Db {
 
     /// Full-text search over inline doc content using FTS5 + BM25 ranking.
     /// Returns results ordered by relevance (best first).
-    #[allow(dead_code)]
     pub fn search_fts(&self, query: &str) -> Result<Vec<SearchResult>> {
         let conn = self.inner.lock().unwrap();
         // FTS5 bm25() returns negative values; ORDER BY ascending = best first.

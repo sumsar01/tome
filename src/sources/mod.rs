@@ -111,13 +111,31 @@ async fn fetch_live(cfg: &Config, doc: &crate::db::DocRecord) -> Result<String> 
     }
 }
 
-/// Fuzzy search across all docs by alias and tags.
+/// Search across all docs: FTS5 content search for inline docs + fuzzy alias/tag match for all.
+/// Results are deduplicated and ranked: FTS5 hits first (by BM25), then fuzzy alias/tag hits.
 pub async fn search(cfg: &Config, db: &Db, query: &str) -> Result<Vec<SearchResult>> {
-    let _ = cfg; // cfg kept for future use (cache settings etc.)
-    let matcher = SkimMatcherV2::default();
+    let _ = cfg;
     let mut results: Vec<SearchResult> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // 1. FTS5 full-text search over inline doc content (best-first by BM25 score)
+    if let Ok(fts_results) = db.search_fts(query) {
+        for r in fts_results {
+            seen.insert(r.alias.clone());
+            results.push(SearchResult {
+                alias: r.alias,
+                snippet: format!("content match: {}", r.snippet),
+                score: (r.score * 1000.0) as i64,
+            });
+        }
+    }
+
+    // 2. Fuzzy match across alias + tags for all docs (catches remote docs with no stored content)
+    let matcher = SkimMatcherV2::default();
     for doc in db.list_docs(None)? {
+        if seen.contains(&doc.alias) {
+            continue; // already in results from FTS5
+        }
         let haystack = format!("{} {}", doc.alias, doc.tags.join(" "));
         if let Some(score) = matcher.fuzzy_match(&haystack, query) {
             results.push(SearchResult {
