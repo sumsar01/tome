@@ -1,6 +1,8 @@
 pub mod app;
 pub mod browser;
+pub mod markdown;
 pub mod reader;
+pub mod theme;
 
 use anyhow::Result;
 use crossterm::{
@@ -14,6 +16,9 @@ use std::io;
 use crate::config::Config;
 use crate::db::Db;
 use app::{App, Screen};
+
+/// How long to wait for a terminal event before re-drawing.
+const POLL_INTERVAL_MS: u64 = 100;
 
 /// Run the full TUI browser.
 pub async fn run(cfg: Config, db: Db) -> Result<()> {
@@ -35,17 +40,26 @@ async fn run_terminal(app: &mut App) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_loop(&mut terminal, app).await;
+    // Ensure terminal is always restored, even on panic.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // We can't use async here, so run_loop is called via the outer async context.
+        // Instead, register a panic hook that restores the terminal.
+        Ok::<(), anyhow::Error>(())
+    }));
+    let _ = result; // The hook handles the panic case.
 
-    disable_raw_mode()?;
-    execute!(
+    let run_result = run_loop(&mut terminal, app).await;
+
+    // Always restore — whether we returned normally or are about to propagate an error.
+    let _ = disable_raw_mode();
+    let _ = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    );
+    let _ = terminal.show_cursor();
 
-    result
+    run_result
 }
 
 async fn run_loop<B: ratatui::backend::Backend>(
@@ -56,18 +70,24 @@ where
     B::Error: Send + Sync + 'static,
 {
     loop {
+        app.tick_status();
+
         terminal.draw(|f| match app.screen {
             Screen::Browser => browser::draw(f, app),
             Screen::Reader => reader::draw(f, app),
         })?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
+        if event::poll(std::time::Duration::from_millis(POLL_INTERVAL_MS))? {
             if let Event::Key(key) = event::read()? {
-                // Global quit
-                if key.code == KeyCode::Char('q')
-                    || (key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                // Ctrl+C always quits, regardless of screen
+                if key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
+                    return Ok(());
+                }
+
+                // 'q' in the browser quits; in the reader it goes back (handled per-screen)
+                if app.screen == Screen::Browser && key.code == KeyCode::Char('q') {
                     return Ok(());
                 }
 

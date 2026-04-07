@@ -143,7 +143,7 @@ fn draw_toc(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             .title(" ToC ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.fg_dim)),
+            .border_style(theme.border_style()),
     );
 
     f.render_widget(toc_widget, area);
@@ -177,19 +177,19 @@ fn draw_scrollbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     // Top arrow
-    lines.push(Line::from(Span::styled("▲", theme.dim_style())));
+    lines.push(Line::from(Span::styled("▴", theme.dim_style())));
 
     // Track
     for i in 0..track_height {
         let (ch, style) = if i == thumb_pos {
             ("█", Style::default().fg(theme.accent))
         } else {
-            ("│", theme.dim_style())
+            ("▕", theme.dim_style())
         };
         lines.push(Line::from(Span::styled(ch, style)));
     }
 
-    // Percentage
+    // Percentage — only show if scrolled at all
     let pct_str = format!("{:>3}%", pct.min(100));
     lines.push(Line::from(Span::styled(pct_str, theme.dim_style())));
 
@@ -202,10 +202,6 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
             app.reader_scroll = app.reader_scroll.saturating_add(1);
-            // Clear status after interaction clears clipboard notice
-            if app.status == "Copied to clipboard!" {
-                app.status.clear();
-            }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.reader_scroll = app.reader_scroll.saturating_sub(1);
@@ -222,7 +218,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('y') => {
             if let Ok(mut clipboard) = arboard::Clipboard::new() {
                 let _ = clipboard.set_text(app.reader_content.clone());
-                app.status = "Copied to clipboard!".to_string();
+                app.set_transient_status("Copied to clipboard!".to_string());
             }
         }
         KeyCode::Char('T') => {

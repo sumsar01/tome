@@ -98,45 +98,47 @@ pub struct Theme {
     pub status: Color,
 
     // ── Code block colours ────────────────────────────────────────────────────
-    /// Foreground for code (inline and block).
+    /// Foreground for code — used as fallback when the language is unknown.
     pub code_fg: Color,
-    /// Background for fenced code blocks.
-    pub code_bg: Color,
     /// Background for inline code spans.
     pub code_span_bg: Color,
+    /// Colour of the horizontal rule lines framing fenced code blocks.
+    pub code_rule: Color,
+    /// syntect theme name used for syntax-highlighted fenced code blocks.
+    pub syntect_theme: &'static str,
 
     // ── Key-badge (help bar) colours ──────────────────────────────────────────
-    /// Background of the `[Key]` pill.
-    pub badge_bg: Color,
-    /// Foreground of the `[Key]` pill.
-    pub badge_fg: Color,
-    /// Colour of the description text after the badge.
+    /// Key label colour in the help bar.
+    pub badge_key: Color,
+    /// Colour of the description text after the key.
     pub badge_desc: Color,
 }
 
 impl Theme {
     // ── Built-in themes ────────────────────────────────────────────────────────
 
-    /// The default magenta-accented dark theme.
+    /// The default indigo-accented dark theme.
     pub fn default_dark() -> Self {
         Self {
-            accent: Color::Magenta,
-            accent_light: Color::LightMagenta,
+            // Soft indigo / lavender
+            accent: Color::Rgb(130, 120, 220),
+            // Lighter lavender
+            accent_light: Color::Rgb(170, 160, 255),
 
-            fg: Color::White,
-            fg_dim: Color::DarkGray,
-            source: Color::Cyan,
-            filter: Color::Yellow,
-            quote: Color::Yellow,
-            status: Color::Yellow,
+            fg: Color::Rgb(220, 220, 230),
+            fg_dim: Color::Rgb(100, 100, 120),
+            source: Color::Rgb(100, 200, 210),
+            filter: Color::Rgb(255, 210, 100),
+            quote: Color::Rgb(200, 180, 120),
+            status: Color::Rgb(130, 210, 130),
 
-            code_fg: Color::Rgb(180, 230, 140),
-            code_bg: Color::Rgb(24, 24, 36),
-            code_span_bg: Color::Rgb(40, 40, 55),
+            code_fg: Color::Rgb(160, 220, 170),
+            code_span_bg: Color::Rgb(38, 36, 58),
+            code_rule: Color::Rgb(55, 50, 80),
+            syntect_theme: "Monokai Extended",
 
-            badge_bg: Color::Rgb(60, 60, 60),
-            badge_fg: Color::White,
-            badge_desc: Color::DarkGray,
+            badge_key: Color::Rgb(130, 120, 220),
+            badge_desc: Color::Rgb(100, 100, 120),
         }
     }
 
@@ -154,11 +156,11 @@ impl Theme {
             status: Color::Magenta,
 
             code_fg: Color::DarkGray,
-            code_bg: Color::Rgb(230, 230, 230),
             code_span_bg: Color::Rgb(215, 215, 215),
+            code_rule: Color::Rgb(180, 180, 200),
+            syntect_theme: "InspiredGitHub",
 
-            badge_bg: Color::Rgb(200, 200, 200),
-            badge_fg: Color::Black,
+            badge_key: Color::Blue,
             badge_desc: Color::Gray,
         }
     }
@@ -185,14 +187,13 @@ impl Theme {
 
             // Green
             code_fg: Color::Rgb(166, 227, 161),
-            // Mantle
-            code_bg: Color::Rgb(24, 24, 37),
             // Base
             code_span_bg: Color::Rgb(30, 30, 46),
+            // Overlay0
+            code_rule: Color::Rgb(108, 112, 134),
+            syntect_theme: "base16-mocha.dark",
 
-            // Surface0
-            badge_bg: Color::Rgb(49, 50, 68),
-            badge_fg: Color::Rgb(205, 214, 244),
+            badge_key: Color::Rgb(203, 166, 247),
             badge_desc: Color::Rgb(127, 132, 156),
         }
     }
@@ -219,14 +220,13 @@ impl Theme {
 
             // Green bright
             code_fg: Color::Rgb(184, 187, 38),
-            // bg1
-            code_bg: Color::Rgb(60, 56, 54),
             // bg2
             code_span_bg: Color::Rgb(80, 73, 69),
+            // bg3
+            code_rule: Color::Rgb(102, 92, 84),
+            syntect_theme: "gruvbox (Dark) (Hard)",
 
-            // bg2
-            badge_bg: Color::Rgb(80, 73, 69),
-            badge_fg: Color::Rgb(235, 219, 178),
+            badge_key: Color::Rgb(254, 128, 25),
             badge_desc: Color::Rgb(146, 131, 116),
         }
     }
@@ -253,14 +253,13 @@ impl Theme {
 
             // Aurora: green
             code_fg: Color::Rgb(163, 190, 140),
-            // Polar Night 2
-            code_bg: Color::Rgb(39, 44, 54),
             // Polar Night 1
             code_span_bg: Color::Rgb(46, 52, 64),
-
             // Polar Night 3
-            badge_bg: Color::Rgb(59, 66, 82),
-            badge_fg: Color::Rgb(236, 239, 244),
+            code_rule: Color::Rgb(67, 76, 94),
+            syntect_theme: "Nord",
+
+            badge_key: Color::Rgb(136, 192, 208),
             badge_desc: Color::Rgb(76, 86, 106),
         }
     }
@@ -287,14 +286,13 @@ impl Theme {
 
             // Green
             code_fg: Color::Rgb(133, 153, 0),
-            // base03
-            code_bg: Color::Rgb(0, 43, 54),
             // base02
             code_span_bg: Color::Rgb(7, 54, 66),
+            // base01
+            code_rule: Color::Rgb(88, 110, 117),
+            syntect_theme: "Solarized (dark)",
 
-            // base02
-            badge_bg: Color::Rgb(7, 54, 66),
-            badge_fg: Color::Rgb(131, 148, 150),
+            badge_key: Color::Rgb(42, 161, 152),
             badge_desc: Color::Rgb(88, 110, 117),
         }
     }
@@ -308,7 +306,7 @@ impl Theme {
     pub fn selection_style(&self) -> Style {
         Style::default()
             .bg(self.accent)
-            .fg(Color::Black)
+            .fg(Color::Rgb(15, 15, 25))
             .add_modifier(Modifier::BOLD)
     }
 
@@ -334,25 +332,28 @@ impl Theme {
 
     // ── Help-bar helpers ───────────────────────────────────────────────────────
 
-    /// Build a single `[key] desc` segment as a `Vec<Span<'static>>`.
+    /// Build a single `key desc` segment as a `Vec<Span<'static>>`.
+    /// Renders as: `  key  desc` — key in accent, desc in dim, no background pill.
     pub fn key_badge<'a>(&self, key: &'a str, desc: &'a str) -> Vec<Span<'a>> {
         vec![
-            Span::styled(" ", Style::default().fg(self.badge_desc)),
+            Span::styled("  ", Style::default().fg(self.badge_desc)),
             Span::styled(
-                format!("[{}]", key),
+                key,
                 Style::default()
-                    .bg(self.badge_bg)
-                    .fg(self.badge_fg)
+                    .fg(self.badge_key)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" {} ", desc), Style::default().fg(self.badge_desc)),
+            Span::styled(format!(" {}", desc), Style::default().fg(self.badge_desc)),
         ]
     }
 
     /// Build a complete help bar `Line` from a list of `(key, description)` pairs.
     pub fn help_bar<'a>(&self, bindings: &[(&'a str, &'a str)]) -> Line<'a> {
         let mut spans: Vec<Span<'a>> = Vec::new();
-        for (key, desc) in bindings {
+        for (i, (key, desc)) in bindings.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled("  ·", Style::default().fg(self.fg_dim)));
+            }
             spans.extend(self.key_badge(key, desc));
         }
         Line::from(spans)

@@ -3,6 +3,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::paths;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheEntry {
     content: String,
@@ -20,9 +22,7 @@ impl CacheEntry {
 }
 
 fn cache_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from(".cache"))
-        .join("tome")
+    paths::app_cache_dir()
 }
 
 fn entry_path(alias: &str) -> PathBuf {

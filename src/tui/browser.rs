@@ -36,21 +36,21 @@ pub fn draw(f: &mut Frame, app: &App) {
     let dim_style = theme.dim_style();
 
     let logo = Paragraph::new(Text::from(vec![
-        Line::from(vec![Span::styled("    ,___,", owl_style)]),
+        Line::from(vec![Span::styled("   ,___,", owl_style)]),
         Line::from(vec![
             Span::styled("   (o,o)", owl_style),
-            Span::raw("    "),
-            Span::styled("t o m e", title_style),
+            Span::raw("   "),
+            Span::styled("T o m e", title_style),
         ]),
         Line::from(vec![
             Span::styled("   {`\"'}", owl_style),
-            Span::raw("    "),
-            Span::styled("─────────────────────────────────────────", dim_style),
+            Span::raw("   "),
+            Span::styled("docs for humans & AI", Style::default().fg(theme.fg)),
         ]),
         Line::from(vec![
             Span::styled("   -\"-\"-", owl_style),
-            Span::raw("    "),
-            Span::styled("docs for humans & AI", dim_style),
+            Span::raw("   "),
+            Span::styled("─────────────────────────────────", dim_style),
         ]),
         Line::from(vec![]),
     ]));
@@ -70,9 +70,9 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     // ── Filter bar ──────────────────────────────────────────────────────────
     let filter_text = if app.filtering {
-        format!("/ {}_", app.filter)
+        format!("  / {}_", app.filter)
     } else if !app.filter.is_empty() {
-        format!("/ {} (esc to clear)", app.filter)
+        format!("  / {}  (esc to clear)", app.filter)
     } else {
         String::new()
     };
@@ -149,9 +149,9 @@ fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
     // Title shows filtered count vs total
     let list_title = if shown < total {
-        format!(" tome  {}/{} ", shown, total)
+        format!(" {}/{} docs ", shown, total)
     } else {
-        format!(" tome  {} ", total)
+        format!(" {} docs ", total)
     };
 
     let list = List::new(items)

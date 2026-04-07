@@ -1,9 +1,14 @@
 use anyhow::{bail, Context, Result};
+use std::sync::OnceLock;
 
 const KEYCHAIN_SERVICE: &str = "tome";
 const CONFLUENCE_TOKEN_KEY: &str = "confluence_token";
 const CONFLUENCE_EMAIL_KEY: &str = "confluence_email";
 const GITHUB_TOKEN_KEY: &str = "github_token";
+
+// In-memory credential caches — keychain is accessed at most once per process.
+static CONFLUENCE_CREDENTIALS: OnceLock<(String, String)> = OnceLock::new();
+static GITHUB_TOKEN: OnceLock<String> = OnceLock::new();
 
 /// Prompt for and store a Confluence API token in the OS keychain.
 /// The token is NEVER written to disk.
@@ -32,7 +37,15 @@ pub fn store_confluence_token(email: &str) -> Result<()> {
 }
 
 /// Retrieve stored Confluence credentials from the OS keychain.
+///
+/// Credentials are fetched from the keychain exactly once per process and then
+/// cached in memory, so navigating across many Confluence docs never triggers
+/// more than two keychain prompts in total.
 pub fn get_confluence_credentials() -> Result<(String, String)> {
+    if let Some(cached) = CONFLUENCE_CREDENTIALS.get() {
+        return Ok(cached.clone());
+    }
+
     let token_entry = keyring::Entry::new(KEYCHAIN_SERVICE, CONFLUENCE_TOKEN_KEY)
         .context("Failed to access keychain")?;
     let token = token_entry.get_password().context(
@@ -45,7 +58,10 @@ pub fn get_confluence_credentials() -> Result<(String, String)> {
         "No Confluence email found. Run `tome auth confluence --email you@example.com` first.",
     )?;
 
-    Ok((email, token))
+    let creds = (email, token);
+    // Another thread may have raced us; that's fine — both values are identical.
+    let _ = CONFLUENCE_CREDENTIALS.set(creds.clone());
+    Ok(creds)
 }
 
 /// Store a GitHub token in the OS keychain.
@@ -79,18 +95,33 @@ pub fn store_github_token() -> Result<()> {
 }
 
 /// Retrieve the GitHub token — first from keychain, then from gh CLI.
+///
+/// The token is cached in memory after the first successful lookup so subsequent
+/// fetches within the same process never hit the keychain again.
 pub fn get_github_token() -> Result<String> {
-    // Try keychain first
-    if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, GITHUB_TOKEN_KEY) {
-        if let Ok(token) = entry.get_password() {
-            return Ok(token);
-        }
+    if let Some(cached) = GITHUB_TOKEN.get() {
+        return Ok(cached.clone());
     }
 
-    // Fall back to gh CLI
-    get_gh_cli_token().context(
-        "No GitHub token found. Run `tome auth github` or ensure you are logged in via `gh auth login`.",
-    )
+    // Try keychain first
+    let token = if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, GITHUB_TOKEN_KEY) {
+        if let Ok(t) = entry.get_password() {
+            t
+        } else {
+            // Fall back to gh CLI
+            get_gh_cli_token().context(
+                "No GitHub token found. Run `tome auth github` or ensure you are logged in via `gh auth login`.",
+            )?
+        }
+    } else {
+        // Fall back to gh CLI
+        get_gh_cli_token().context(
+            "No GitHub token found. Run `tome auth github` or ensure you are logged in via `gh auth login`.",
+        )?
+    };
+
+    let _ = GITHUB_TOKEN.set(token.clone());
+    Ok(token)
 }
 
 fn get_gh_cli_token() -> Result<String> {

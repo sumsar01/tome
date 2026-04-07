@@ -63,21 +63,3 @@ fn list_directory(dir: &std::path::Path) -> Result<String> {
     Ok(output)
 }
 
-/// List all markdown files in a local source directory.
-#[allow(dead_code)]
-pub fn list_files(root: &std::path::Path) -> Vec<PathBuf> {
-    WalkDir::new(root)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().is_file()
-                && e.path()
-                    .extension()
-                    .and_then(|x| x.to_str())
-                    .map(|x| matches!(x, "md" | "txt" | "rst" | "markdown"))
-                    .unwrap_or(false)
-        })
-        .map(|e| e.path().to_owned())
-        .collect()
-}

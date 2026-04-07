@@ -11,6 +11,8 @@ use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::paths;
+
 /// Source name used for docs whose content is stored directly in the DB.
 pub const SOURCE_INLINE: &str = "inline";
 
@@ -18,7 +20,7 @@ pub const SOURCE_INLINE: &str = "inline";
 #[derive(Debug, Clone)]
 pub struct DocRecord {
     pub alias: String,
-    /// Source name: "inline", "whiteaway", a GitHub source name, etc.
+    /// Source name: `SOURCE_INLINE`, or a named source from config (e.g. "whiteaway", a GitHub source name).
     pub source: String,
     /// Confluence page ID (remote docs)
     pub page_id: Option<String>,
@@ -286,10 +288,7 @@ fn row_to_doc(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocRecord> {
 
 /// Path to the SQLite database file.
 pub fn db_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("tome")
-        .join("tome.db")
+    paths::app_data_dir().join("tome.db")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -348,13 +347,13 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.add_doc(&make_doc(
             "guide",
-            "inline",
+            SOURCE_INLINE,
             Some("This is a guide about tokio async runtime"),
         ))
         .unwrap();
         db.add_doc(&make_doc(
             "other",
-            "inline",
+            SOURCE_INLINE,
             Some("Completely unrelated content about cooking"),
         ))
         .unwrap();

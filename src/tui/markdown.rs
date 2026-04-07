@@ -5,8 +5,16 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
 };
+use syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet};
 
 use super::theme::Theme;
+
+// ── Syntax highlighting globals ───────────────────────────────────────────────
+
+thread_local! {
+    static SYNTAX_SET: SyntaxSet = SyntaxSet::load_defaults_newlines();
+    static THEME_SET: ThemeSet = ThemeSet::load_defaults();
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -87,8 +95,9 @@ struct Renderer {
     fg_dim: Color,
     quote: Color,
     code_fg: Color,
-    code_bg: Color,
     code_span_bg: Color,
+    code_rule: Color,
+    syntect_theme: &'static str,
 }
 
 impl Renderer {
@@ -115,8 +124,9 @@ impl Renderer {
             fg_dim: theme.fg_dim,
             quote: theme.quote,
             code_fg: theme.code_fg,
-            code_bg: theme.code_bg,
             code_span_bg: theme.code_span_bg,
+            code_rule: theme.code_rule,
+            syntect_theme: theme.syntect_theme,
         }
     }
 
@@ -166,6 +176,12 @@ impl Renderer {
             col_widths.iter().sum::<usize>() + if num_cols > 1 { (num_cols - 1) * 3 } else { 0 };
 
         let sep_style = Style::default().fg(self.fg_dim);
+
+        // Top border of the table
+        self.lines.push(Line::from(Span::styled(
+            "─".repeat(total_w.max(1)),
+            sep_style,
+        )));
 
         // Pass 2: render each row with padding
         for (is_header, row) in rows {
@@ -238,10 +254,8 @@ impl Renderer {
             Event::End(TagEnd::CodeBlock) => {
                 self.in_code_block = false;
                 const CODE_WIDTH: usize = 76;
-                let rule = Span::styled(
-                    "─".repeat(CODE_WIDTH),
-                    Style::default().fg(Color::Rgb(50, 50, 65)),
-                );
+                let rule =
+                    Span::styled("─".repeat(CODE_WIDTH), Style::default().fg(self.code_rule));
                 self.lines.push(Line::from(rule.clone()));
 
                 // Language label: dim italic, 2-space indent
@@ -249,21 +263,83 @@ impl Renderer {
                     self.lines.push(Line::from(Span::styled(
                         format!("  {}", self.code_lang),
                         Style::default()
-                            .fg(Color::Rgb(80, 80, 100))
+                            .fg(self.fg_dim)
                             .add_modifier(Modifier::ITALIC),
                     )));
                 }
 
-                // Code lines padded to CODE_WIDTH so background fills uniformly
-                for cl in std::mem::take(&mut self.code_lines) {
-                    let content = format!("  {}", cl);
-                    let pad = CODE_WIDTH.saturating_sub(content.chars().count());
-                    let padded = format!("{}{}", content, " ".repeat(pad));
-                    self.lines.push(Line::from(Span::styled(
-                        padded,
-                        Style::default().fg(self.code_fg).bg(self.code_bg),
-                    )));
-                }
+                // Build a syntect highlighter for the language (if known)
+                let syntect_theme_name = self.syntect_theme;
+                let code_lang = self.code_lang.clone();
+                let code_lines = std::mem::take(&mut self.code_lines);
+
+                SYNTAX_SET.with(|ss| {
+                    THEME_SET.with(|ts| {
+                        // Resolve syntax — try the exact lang tag, then plain-text fallback
+                        let syntax = if code_lang.is_empty() {
+                            None
+                        } else {
+                            ss.find_syntax_by_token(&code_lang)
+                        };
+
+                        // Resolve syntect theme — fall back to "base16-ocean.dark" if not found
+                        let theme = ts
+                            .themes
+                            .get(syntect_theme_name)
+                            .or_else(|| ts.themes.get("base16-ocean.dark"));
+
+                        let mut highlighter = syntax
+                            .zip(theme)
+                            .map(|(syn, thm)| HighlightLines::new(syn, thm));
+
+                        for cl in &code_lines {
+                            let spans = match highlighter.as_mut() {
+                                Some(hl) => {
+                                    let line_with_newline = format!("{}\n", cl);
+                                    match hl.highlight_line(&line_with_newline, ss) {
+                                        Ok(tokens) => {
+                                            let mut spans: Vec<Span<'static>> = Vec::new();
+                                            spans.push(Span::raw("  "));
+                                            for (style, text) in tokens {
+                                                if text.is_empty() || text == "\n" {
+                                                    continue;
+                                                }
+                                                let fg = syntect_color_to_ratatui(style.foreground);
+                                                let mut ratatui_style = Style::default().fg(fg);
+                                                use syntect::highlighting::FontStyle;
+                                                if style.font_style.contains(FontStyle::BOLD) {
+                                                    ratatui_style =
+                                                        ratatui_style.add_modifier(Modifier::BOLD);
+                                                }
+                                                if style.font_style.contains(FontStyle::ITALIC) {
+                                                    ratatui_style = ratatui_style
+                                                        .add_modifier(Modifier::ITALIC);
+                                                }
+                                                if style.font_style.contains(FontStyle::UNDERLINE) {
+                                                    ratatui_style = ratatui_style
+                                                        .add_modifier(Modifier::UNDERLINED);
+                                                }
+                                                let text_owned =
+                                                    text.trim_end_matches('\n').to_string();
+                                                spans.push(Span::styled(text_owned, ratatui_style));
+                                            }
+                                            spans
+                                        }
+                                        Err(_) => vec![Span::styled(
+                                            format!("  {}", cl),
+                                            Style::default().fg(self.code_fg),
+                                        )],
+                                    }
+                                }
+                                None => vec![Span::styled(
+                                    format!("  {}", cl),
+                                    Style::default().fg(self.code_fg),
+                                )],
+                            };
+                            self.lines.push(Line::from(spans));
+                        }
+                    });
+                });
 
                 self.lines.push(Line::from(rule));
                 self.push_blank();
@@ -550,7 +626,7 @@ impl Renderer {
             ),
             HeadingLevel::H3 => (
                 Style::default()
-                    .fg(self.accent)
+                    .fg(self.accent_light)
                     .add_modifier(Modifier::BOLD),
                 "› ",
             ),
@@ -568,6 +644,11 @@ impl Renderer {
             ),
         }
     }
+}
+
+/// Convert a syntect `Color` to a ratatui `Color::Rgb`.
+fn syntect_color_to_ratatui(c: syntect::highlighting::Color) -> Color {
+    Color::Rgb(c.r, c.g, c.b)
 }
 
 fn heading_level_to_u16(level: HeadingLevel) -> u16 {

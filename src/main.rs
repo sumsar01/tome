@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use reqwest;
-
 mod cache;
 mod config;
 mod db;
+mod http;
 mod mcp;
+mod paths;
 mod sources;
 mod tui;
 
@@ -186,7 +186,7 @@ async fn main() -> Result<()> {
             };
 
             let final_tags = if tags_vec.is_empty() {
-                mcp::infer_tags_pub(&content)
+                mcp::infer_tags(&content)
             } else {
                 tags_vec
             };
@@ -212,9 +212,7 @@ async fn main() -> Result<()> {
 
 /// Fetch a URL and return its content as markdown (best-effort).
 async fn fetch_url(url: &str) -> anyhow::Result<String> {
-    let client = reqwest::Client::builder()
-        .user_agent("tome/0.1")
-        .build()?;
+    let client = http::build_http_client()?;
     let resp = client.get(url).send().await
         .map_err(|e| anyhow::anyhow!("Failed to fetch '{url}': {e}"))?;
     if !resp.status().is_success() {

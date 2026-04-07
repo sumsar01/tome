@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use super::Source;
 use crate::config::auth;
+use crate::http;
 
 pub struct GitHubSource {
     owner: String,
@@ -20,10 +21,7 @@ impl GitHubSource {
             .split_once('/')
             .ok_or_else(|| anyhow::anyhow!("GitHub repo must be in 'owner/repo' format, got '{repo}'"))?;
 
-        let client = Client::builder()
-            .user_agent("tome/0.1")
-            .build()
-            .context("Failed to build HTTP client")?;
+        let client = http::build_http_client()?;
 
         Ok(Self {
             owner: owner.to_string(),
@@ -35,22 +33,18 @@ impl GitHubSource {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct GitHubContentResponse {
     #[serde(rename = "type")]
     kind: String,
     content: Option<String>,
     encoding: Option<String>,
-    name: String,
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct GitHubDirEntry {
     name: String,
     #[serde(rename = "type")]
     kind: String,
-    path: String,
 }
 
 #[async_trait]

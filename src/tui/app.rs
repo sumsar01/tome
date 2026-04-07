@@ -1,9 +1,13 @@
 use anyhow::Result;
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::db::Db;
 use crate::sources;
 use super::theme::{Theme, ThemeName};
+
+/// How long transient status messages (theme change, clipboard copy) remain visible.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -51,6 +55,8 @@ pub struct App {
     // ── Global ─────────────────────────────────────────────────────────────────
     /// Status message shown at bottom (errors, notifications)
     pub status: String,
+    /// When Some, the status message will be cleared after this instant.
+    pub status_expires_at: Option<Instant>,
 }
 
 impl App {
@@ -84,6 +90,7 @@ impl App {
             toc: Vec::new(),
             toc_visible: true,
             status: String::new(),
+            status_expires_at: None,
         }
     }
 
@@ -178,6 +185,22 @@ impl App {
     pub fn cycle_theme(&mut self) {
         self.theme_name = self.theme_name.next();
         self.theme = self.theme_name.to_theme();
-        self.status = format!("Theme: {}", self.theme_name.display());
+        self.set_transient_status(format!("Theme: {}", self.theme_name.display()));
+    }
+
+    /// Set a status message that auto-clears after STATUS_TIMEOUT.
+    pub fn set_transient_status(&mut self, msg: String) {
+        self.status = msg;
+        self.status_expires_at = Some(Instant::now() + STATUS_TIMEOUT);
+    }
+
+    /// Expire the status message if its timeout has elapsed.
+    pub fn tick_status(&mut self) {
+        if let Some(expires) = self.status_expires_at {
+            if Instant::now() >= expires {
+                self.status.clear();
+                self.status_expires_at = None;
+            }
+        }
     }
 }
