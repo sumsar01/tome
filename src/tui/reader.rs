@@ -46,6 +46,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         bindings.push(("y", "Copy"));
         bindings.push(("h", "History"));
+        bindings.push(("o", "Open URL"));
         bindings.push(("T", "Theme"));
         bindings.push(("q/Esc", "Back"));
         theme.help_bar(&bindings)
@@ -224,6 +225,9 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Char('h') => {
             app.open_history();
+        }
+        KeyCode::Char('o') => {
+            app.open_source_in_browser();
         }
         KeyCode::Char('T') => {
             app.cycle_theme();

@@ -276,6 +276,54 @@ impl App {
         }
     }
 
+    /// Open the source URL for the current reader doc in the default browser.
+    pub fn open_source_in_browser(&mut self) {
+        let alias = &self.reader_title;
+        match self.db.find_doc(alias) {
+            Ok(Some(doc)) => {
+                match doc.source.as_str() {
+                    crate::db::SOURCE_INLINE | "local" => {
+                        self.set_transient_status("No URL — this is a local/inline doc.".to_string());
+                    }
+                    source_name => {
+                        if let Some(scfg) = self.cfg.find_source(source_name) {
+                            let url = match scfg.kind {
+                                crate::config::SourceKind::Github => {
+                                    let repo = scfg.repo.as_deref().unwrap_or("");
+                                    let git_ref = scfg.git_ref.as_deref().unwrap_or("main");
+                                    let path = doc.path.as_deref().unwrap_or("");
+                                    format!("https://github.com/{}/blob/{}/{}", repo, git_ref, path)
+                                }
+                                crate::config::SourceKind::Confluence => {
+                                    let base = scfg.base_url.as_deref().unwrap_or("").trim_end_matches('/');
+                                    if let Some(ref page_id) = doc.page_id {
+                                        format!("{}/wiki/spaces/_/pages/{}", base, page_id)
+                                    } else {
+                                        doc.path.as_deref().map(|p| format!("{}/{}", base, p.trim_start_matches('/'))).unwrap_or_default()
+                                    }
+                                }
+                                _ => {
+                                    self.set_transient_status("No URL for this source type.".to_string());
+                                    return;
+                                }
+                            };
+                            #[cfg(target_os = "macos")]
+                            let _ = std::process::Command::new("open").arg(&url).spawn();
+                            #[cfg(target_os = "linux")]
+                            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                            #[cfg(target_os = "windows")]
+                            let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
+                            self.set_transient_status(format!("Opened {}", url));
+                        } else {
+                            self.set_transient_status(format!("Source '{}' not found in config.", source_name));
+                        }
+                    }
+                }
+            }
+            _ => self.set_transient_status("Doc not found.".to_string()),
+        }
+    }
+
     /// Advance to the next theme in the rotation cycle.
     pub fn cycle_theme(&mut self) {
         self.theme_name = self.theme_name.next();

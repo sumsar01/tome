@@ -65,6 +65,11 @@ enum Command {
         /// Doc alias to refresh
         alias: String,
     },
+    /// Open the source URL for a doc in the default browser
+    Open {
+        /// Doc alias
+        alias: String,
+    },
     /// Show fetch history for a doc
     History {
         /// Doc alias
@@ -221,6 +226,13 @@ async fn main() -> Result<()> {
             let content = sources::fetch(&cfg, &db, &alias, false).await?;
             println!("Refreshed '{alias}' ({} bytes).", content.len());
         }
+        Command::Open { alias } => {
+            let doc = db.find_doc(&alias)?
+                .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
+            let url = source_url(&cfg, &doc)?;
+            open_in_browser(&url)?;
+            println!("Opening {url}");
+        }
         Command::History { alias } => {
             let versions = db.list_versions(&alias)?;
             if versions.is_empty() {
@@ -287,6 +299,60 @@ async fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Derive the canonical source URL for a doc record.
+fn source_url(cfg: &config::Config, doc: &db::DocRecord) -> anyhow::Result<String> {
+    match doc.source.as_str() {
+        db::SOURCE_INLINE => {
+            anyhow::bail!("'{}' is an inline doc — it has no source URL.", doc.alias);
+        }
+        "local" => {
+            anyhow::bail!("'{}' is a local file — it has no URL.", doc.alias);
+        }
+        source_name => {
+            let scfg = cfg.find_source(source_name)
+                .ok_or_else(|| anyhow::anyhow!("Source '{}' not found in config", source_name))?;
+            match scfg.kind {
+                config::SourceKind::Github => {
+                    let repo = scfg.repo.as_deref().unwrap_or("");
+                    let git_ref = scfg.git_ref.as_deref().unwrap_or("main");
+                    let path = doc.path.as_deref().unwrap_or("");
+                    Ok(format!("https://github.com/{}/blob/{}/{}", repo, git_ref, path))
+                }
+                config::SourceKind::Confluence => {
+                    let base = scfg.base_url.as_deref().unwrap_or("").trim_end_matches('/');
+                    if let Some(page_id) = &doc.page_id {
+                        Ok(format!("{}/wiki/spaces/_/pages/{}", base, page_id))
+                    } else if let Some(path) = &doc.path {
+                        Ok(format!("{}/{}", base, path.trim_start_matches('/')))
+                    } else {
+                        anyhow::bail!("Confluence doc '{}' has no page_id or path.", doc.alias);
+                    }
+                }
+                config::SourceKind::Local => {
+                    anyhow::bail!("'{}' is a local source — it has no URL.", doc.alias);
+                }
+                config::SourceKind::Inline => {
+                    anyhow::bail!("'{}' is an inline doc — it has no source URL.", doc.alias);
+                }
+            }
+        }
+    }
+}
+
+/// Open a URL in the system's default browser.
+fn open_in_browser(url: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(url).spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to open browser: {e}"))?;
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open").arg(url).spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to open browser: {e}"))?;
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("cmd").args(["/c", "start", url]).spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to open browser: {e}"))?;
     Ok(())
 }
 
