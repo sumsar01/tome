@@ -60,6 +60,11 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Re-fetch a doc and refresh its cache
+    Refresh {
+        /// Doc alias to refresh
+        alias: String,
+    },
     /// Save a local markdown file or URL as an inline doc
     Add {
         /// Short unique alias (kebab-case, e.g. "fastify-plugins")
@@ -191,6 +196,14 @@ async fn main() -> Result<()> {
             }
             db.remove_doc(&alias)?;
             println!("Removed '{alias}'.");
+        }
+        Command::Refresh { alias } => {
+            if !db.alias_exists(&alias) {
+                anyhow::bail!("No doc with alias '{}' found.", alias);
+            }
+            cache::invalidate(&alias)?;
+            let content = sources::fetch(&cfg, &db, &alias, false).await?;
+            println!("Refreshed '{alias}' ({} bytes).", content.len());
         }
         Command::Add { alias, file, url, tags } => {
             let tags_vec: Vec<String> = tags

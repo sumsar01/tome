@@ -60,6 +60,18 @@ pub fn set(alias: &str, content: &str, ttl_seconds: u64) -> Result<()> {
     Ok(())
 }
 
+/// Remove the cache entry for a single alias. Returns true if the entry existed.
+pub fn invalidate(alias: &str) -> Result<bool> {
+    let path = entry_path(alias);
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .with_context(|| format!("Failed to remove cache entry for '{alias}'"))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Clear all cached docs.
 pub fn clear() -> Result<()> {
     let dir = cache_dir();
