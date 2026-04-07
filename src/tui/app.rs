@@ -66,6 +66,8 @@ pub struct App {
     pub history_selected: usize,
     /// Diff text to display (None = show history list, Some = show diff)
     pub diff_content: Option<String>,
+    /// Whether to show the metadata info overlay
+    pub show_info: bool,
 }
 
 impl App {
@@ -103,6 +105,7 @@ impl App {
             history_entries: Vec::new(),
             history_selected: 0,
             diff_content: None,
+            show_info: false,
         }
     }
 

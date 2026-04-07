@@ -47,11 +47,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         bindings.push(("y", "Copy"));
         bindings.push(("h", "History"));
         bindings.push(("o", "Open URL"));
+        bindings.push(("i", "Info"));
         bindings.push(("T", "Theme"));
         bindings.push(("q/Esc", "Back"));
         theme.help_bar(&bindings)
     };
     f.render_widget(Paragraph::new(help_line), help_area);
+
+    // ── Metadata info overlay ─────────────────────────────────────────────────
+    if app.show_info {
+        draw_info(f, app, content_area);
+        return;
+    }
 
     // ── Content horizontal split ──────────────────────────────────────────────
     // Layout: [gutter] [ToC (optional, max 26)] [reading col (max 100)] [gutter] [scrollbar(1)]
@@ -107,6 +114,78 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .scroll((app.reader_scroll, 0));
 
     f.render_widget(content, reading_col_area);
+}
+
+fn draw_info(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let theme = &app.theme;
+    let alias = &app.reader_title;
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("Alias:   ", Style::default().fg(theme.fg_dim)),
+        Span::styled(alias.clone(), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+    ]));
+
+    if let Ok(Some(doc)) = app.db.find_doc(alias) {
+        lines.push(Line::from(vec![
+            Span::styled("Source:  ", Style::default().fg(theme.fg_dim)),
+            Span::styled(doc.source.clone(), Style::default().fg(theme.fg)),
+        ]));
+        if let Some(ref path) = doc.path {
+            lines.push(Line::from(vec![
+                Span::styled("Path:    ", Style::default().fg(theme.fg_dim)),
+                Span::styled(path.clone(), Style::default().fg(theme.fg)),
+            ]));
+        }
+        if let Some(ref page_id) = doc.page_id {
+            lines.push(Line::from(vec![
+                Span::styled("Page ID: ", Style::default().fg(theme.fg_dim)),
+                Span::styled(page_id.clone(), Style::default().fg(theme.fg)),
+            ]));
+        }
+        let tag_str = if doc.tags.is_empty() { "(none)".to_string() } else { doc.tags.join(", ") };
+        lines.push(Line::from(vec![
+            Span::styled("Tags:    ", Style::default().fg(theme.fg_dim)),
+            Span::styled(tag_str, Style::default().fg(theme.fg)),
+        ]));
+        let size = app.reader_content.len();
+        lines.push(Line::from(vec![
+            Span::styled("Size:    ", Style::default().fg(theme.fg_dim)),
+            Span::styled(format!("{} bytes", size), Style::default().fg(theme.fg)),
+        ]));
+    }
+
+    // Last fetched from version history
+    if let Ok(versions) = app.db.list_versions(alias) {
+        if let Some(last) = versions.last() {
+            lines.push(Line::from(vec![
+                Span::styled("Fetched: ", Style::default().fg(theme.fg_dim)),
+                Span::styled(last.fetched_at.clone(), Style::default().fg(theme.fg)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("Hash:    ", Style::default().fg(theme.fg_dim)),
+                Span::styled(last.content_hash.clone(), Style::default().fg(theme.fg_dim)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("History: ", Style::default().fg(theme.fg_dim)),
+                Span::styled(format!("{} version(s)", versions.len()), Style::default().fg(theme.fg)),
+            ]));
+        }
+    }
+
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled("Press 'i' or Esc to close", theme.dim_style())));
+
+    let para = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .title(" Doc Info ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(theme.border_style()),
+        )
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, area);
 }
 
 fn draw_toc(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -229,12 +308,19 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('o') => {
             app.open_source_in_browser();
         }
+        KeyCode::Char('i') => {
+            app.show_info = !app.show_info;
+        }
         KeyCode::Char('T') => {
             app.cycle_theme();
         }
         KeyCode::Char('q') | KeyCode::Esc => {
-            app.status.clear();
-            app.go_back();
+            if app.show_info {
+                app.show_info = false;
+            } else {
+                app.status.clear();
+                app.go_back();
+            }
         }
         _ => {}
     }

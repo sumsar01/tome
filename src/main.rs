@@ -70,6 +70,26 @@ enum Command {
         /// Doc alias
         alias: String,
     },
+    /// Export all registered docs to stdout as JSON
+    Export {
+        /// Output format: json | markdown
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Add a tag to an existing doc
+    Tag {
+        /// Doc alias
+        alias: String,
+        /// Tag to add
+        tag: String,
+    },
+    /// Remove a tag from an existing doc
+    Untag {
+        /// Doc alias
+        alias: String,
+        /// Tag to remove
+        tag: String,
+    },
     /// Show fetch history for a doc
     History {
         /// Doc alias
@@ -232,6 +252,69 @@ async fn main() -> Result<()> {
             let url = source_url(&cfg, &doc)?;
             open_in_browser(&url)?;
             println!("Opening {url}");
+        }
+        Command::Export { format } => {
+            let docs = db.list_docs(None)?;
+            match format.as_str() {
+                "json" => {
+                    let mut records = Vec::new();
+                    for info in &docs {
+                        if let Ok(Some(doc)) = db.find_doc(&info.alias) {
+                            records.push(serde_json::json!({
+                                "alias": doc.alias,
+                                "source": doc.source,
+                                "page_id": doc.page_id,
+                                "path": doc.path,
+                                "tags": doc.tags,
+                                "content": doc.content,
+                            }));
+                        }
+                    }
+                    println!("{}", serde_json::to_string_pretty(&records)?);
+                }
+                "markdown" => {
+                    for info in &docs {
+                        if let Ok(Some(doc)) = db.find_doc(&info.alias) {
+                            println!("# {}", doc.alias);
+                            println!("<!-- source: {} | tags: {} -->", doc.source, doc.tags.join(", "));
+                            println!();
+                            if let Some(content) = &doc.content {
+                                println!("{}", content);
+                            } else {
+                                println!("_(remote doc — run `tome get {}` to fetch content)_", doc.alias);
+                            }
+                            println!("\n---\n");
+                        }
+                    }
+                }
+                other => {
+                    anyhow::bail!("Unknown format '{other}'. Use 'json' or 'markdown'.");
+                }
+            }
+        }
+        Command::Tag { alias, tag } => {
+            let doc = db.find_doc(&alias)?
+                .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
+            let mut tags = doc.tags.clone();
+            let tag = tag.trim().to_string();
+            if tags.contains(&tag) {
+                eprintln!("Tag '{}' already present on '{}'.", tag, alias);
+            } else {
+                tags.push(tag.clone());
+                db.update_tags(&alias, &tags)?;
+                println!("Added tag '{}' to '{}'.", tag, alias);
+            }
+        }
+        Command::Untag { alias, tag } => {
+            let doc = db.find_doc(&alias)?
+                .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
+            let original_len = doc.tags.len();
+            let tags: Vec<String> = doc.tags.into_iter().filter(|t| t != &tag).collect();
+            if tags.len() == original_len {
+                anyhow::bail!("Tag '{}' not found on '{}'.", tag, alias);
+            }
+            db.update_tags(&alias, &tags)?;
+            println!("Removed tag '{}' from '{}'.", tag, alias);
         }
         Command::History { alias } => {
             let versions = db.list_versions(&alias)?;

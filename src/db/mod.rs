@@ -259,8 +259,18 @@ impl Db {
         Ok(docs)
     }
 
-    // ── Versioning ────────────────────────────────────────────────────────────
+    /// Update the tags for a doc.
+    pub fn update_tags(&self, alias: &str, tags: &[String]) -> Result<bool> {
+        let tags_json = serde_json::to_string(tags).context("Failed to serialise tags")?;
+        let conn = self.inner.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE docs SET tags = ?1 WHERE alias = ?2",
+            params![tags_json, alias],
+        )?;
+        Ok(n > 0)
+    }
 
+    // ── Versioning ────────────────────────────────────────────────────────────
     /// Record a new version of a doc. Skips insert if content hash is unchanged
     /// (i.e. the doc has not changed since the last fetch).
     pub fn record_version(&self, alias: &str, content: &str) -> Result<()> {
