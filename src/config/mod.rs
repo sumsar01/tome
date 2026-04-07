@@ -215,19 +215,29 @@ impl Config {
     /// If legacy `[[docs]]` entries are found and no `tome.db` exists yet,
     /// they are migrated automatically and removed from config.toml.
     pub fn load() -> Result<Self> {
-        let path = config_path();
+        // Honour TOME_PROFILE env var for profile selection.
+        let profile = std::env::var("TOME_PROFILE").ok();
+        let path = profile
+            .as_deref()
+            .map(profile_config_path)
+            .unwrap_or_else(config_path);
+        Self::load_from(&path)
+    }
+
+    /// Load config from an explicit path (used by `--config` and `--profile` flags).
+    pub fn load_from(path: &PathBuf) -> Result<Self> {
         if !path.exists() {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).with_context(|| {
                     format!("Failed to create config dir: {}", parent.display())
                 })?;
             }
-            std::fs::write(&path, DEFAULT_CONFIG)
+            std::fs::write(path, DEFAULT_CONFIG)
                 .with_context(|| format!("Failed to write default config: {}", path.display()))?;
             eprintln!("Created default config at {}", path.display());
         }
 
-        let content = std::fs::read_to_string(&path)
+        let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config: {}", path.display()))?;
 
         let cfg: Config = toml::from_str(&content)
@@ -355,6 +365,12 @@ impl Config {
 
 pub fn config_path() -> PathBuf {
     paths::app_config_dir().join("config.toml")
+}
+
+/// Return the config path for a named profile.
+/// Profile "work" → `<config_dir>/config.work.toml`
+pub fn profile_config_path(profile: &str) -> PathBuf {
+    paths::app_config_dir().join(format!("config.{}.toml", profile))
 }
 
 /// Legacy path for inline .md files — used only during migration.

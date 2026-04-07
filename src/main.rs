@@ -12,6 +12,13 @@ mod tui;
 #[derive(Parser)]
 #[command(name = "tome", version, about = "A docs reader for humans and AI")]
 struct Cli {
+    /// Path to a config file (overrides default and TOME_PROFILE)
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<String>,
+    /// Named config profile to use (reads config.<profile>.toml; overridden by --config)
+    /// Can also be set via the TOME_PROFILE environment variable.
+    #[arg(long, global = true, value_name = "PROFILE")]
+    profile: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -146,7 +153,15 @@ enum CacheAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let cfg = config::Config::load()?;
+
+    // Resolve config path: --config > --profile > TOME_PROFILE env > default
+    let cfg = if let Some(ref path) = cli.config {
+        config::Config::load_from(&std::path::PathBuf::from(path))?
+    } else if let Some(ref profile) = cli.profile {
+        config::Config::load_from(&config::profile_config_path(profile))?
+    } else {
+        config::Config::load()?
+    };
 
     // Only enable logging for non-TUI commands — tracing output to stderr
     // corrupts the alternate screen used by the TUI.
