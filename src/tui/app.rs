@@ -13,6 +13,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 pub enum Screen {
     Browser,
     Reader,
+    History,
 }
 
 pub struct App {
@@ -57,6 +58,14 @@ pub struct App {
     pub status: String,
     /// When Some, the status message will be cleared after this instant.
     pub status_expires_at: Option<Instant>,
+
+    // ── History/diff overlay ───────────────────────────────────────────────────
+    /// Version history entries for history screen
+    pub history_entries: Vec<crate::db::DocVersion>,
+    /// Selected index in history list
+    pub history_selected: usize,
+    /// Diff text to display (None = show history list, Some = show diff)
+    pub diff_content: Option<String>,
 }
 
 impl App {
@@ -91,6 +100,9 @@ impl App {
             toc_visible: true,
             status: String::new(),
             status_expires_at: None,
+            history_entries: Vec::new(),
+            history_selected: 0,
+            diff_content: None,
         }
     }
 
@@ -177,8 +189,45 @@ impl App {
     }
 
     pub fn go_back(&mut self) {
-        self.screen = Screen::Browser;
-        self.reader_scroll = 0;
+        match self.screen {
+            Screen::History => {
+                self.screen = Screen::Reader;
+                self.diff_content = None;
+            }
+            _ => {
+                self.screen = Screen::Browser;
+                self.reader_scroll = 0;
+            }
+        }
+    }
+
+    /// Open the history overlay for the current reader doc.
+    pub fn open_history(&mut self) {
+        match self.db.list_versions(&self.reader_title) {
+            Ok(versions) => {
+                self.history_entries = versions;
+                self.history_selected = self.history_entries.len().saturating_sub(1);
+                self.diff_content = None;
+                self.screen = Screen::History;
+            }
+            Err(e) => {
+                self.set_transient_status(format!("Error loading history: {e}"));
+            }
+        }
+    }
+
+    /// Show diff for the selected history entry vs the previous one.
+    pub fn show_diff_for_selected(&mut self) {
+        let n = self.history_entries.len();
+        if n < 2 {
+            self.set_transient_status("Need at least 2 versions to diff.".to_string());
+            return;
+        }
+        let idx2 = self.history_selected;
+        let idx1 = if idx2 == 0 { 1 } else { idx2 - 1 };
+        let a = &self.history_entries[idx1];
+        let b = &self.history_entries[idx2];
+        self.diff_content = Some(crate::mcp::unified_diff_string_pub(&self.reader_title, a, b));
     }
 
     /// Advance to the next theme in the rotation cycle.

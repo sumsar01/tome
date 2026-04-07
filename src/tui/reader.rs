@@ -45,6 +45,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             }
         }
         bindings.push(("y", "Copy"));
+        bindings.push(("h", "History"));
         bindings.push(("T", "Theme"));
         bindings.push(("q/Esc", "Back"));
         theme.help_bar(&bindings)
@@ -220,6 +221,9 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 let _ = clipboard.set_text(app.reader_content.clone());
                 app.set_transient_status("Copied to clipboard!".to_string());
             }
+        }
+        KeyCode::Char('h') => {
+            app.open_history();
         }
         KeyCode::Char('T') => {
             app.cycle_theme();

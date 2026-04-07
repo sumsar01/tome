@@ -48,6 +48,17 @@ pub struct SearchResult {
     pub score: f64,
 }
 
+/// A version entry in the doc history.
+#[derive(Debug, Clone)]
+pub struct DocVersion {
+    /// 1-based index within this alias (oldest = 1)
+    pub version: usize,
+    pub alias: String,
+    pub fetched_at: String,   // ISO 8601 UTC
+    pub content_hash: String, // first 8 hex chars of SHA-256
+    pub content: String,
+}
+
 /// Thread-safe handle to the SQLite database.
 #[derive(Clone)]
 pub struct Db {
@@ -129,6 +140,16 @@ impl Db {
                 INSERT INTO docs_fts(docs_fts, rowid, alias, content)
                 VALUES ('delete', old.rowid, old.alias, COALESCE(old.content, ''));
             END;
+
+            CREATE TABLE IF NOT EXISTS doc_versions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                alias        TEXT NOT NULL,
+                fetched_at   TEXT NOT NULL,  -- ISO 8601 UTC
+                content_hash TEXT NOT NULL,  -- first 8 hex chars of SHA-256
+                content      TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS doc_versions_alias ON doc_versions(alias, id ASC);
             ",
         )
         .context("Failed to initialise database schema")?;
@@ -238,6 +259,66 @@ impl Db {
         Ok(docs)
     }
 
+    // ── Versioning ────────────────────────────────────────────────────────────
+
+    /// Record a new version of a doc. Skips insert if content hash is unchanged
+    /// (i.e. the doc has not changed since the last fetch).
+    pub fn record_version(&self, alias: &str, content: &str) -> Result<()> {
+        let hash = content_hash(content);
+        let conn = self.inner.lock().unwrap();
+
+        // Check if the last stored hash matches
+        let last_hash: Option<String> = conn
+            .query_row(
+                "SELECT content_hash FROM doc_versions WHERE alias = ?1 ORDER BY id DESC LIMIT 1",
+                params![alias],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if last_hash.as_deref() == Some(&hash) {
+            return Ok(()); // unchanged — don't store a duplicate
+        }
+
+        let fetched_at = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO doc_versions (alias, fetched_at, content_hash, content)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![alias, fetched_at, hash, content],
+        )
+        .with_context(|| format!("Failed to record version for '{alias}'"))?;
+        Ok(())
+    }
+
+    /// List all recorded versions of a doc (oldest first).
+    pub fn list_versions(&self, alias: &str) -> Result<Vec<DocVersion>> {
+        let conn = self.inner.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT alias, fetched_at, content_hash, content
+             FROM doc_versions WHERE alias = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![alias], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut versions = Vec::new();
+        for (i, row) in rows.enumerate() {
+            let (alias, fetched_at, content_hash, content) = row?;
+            versions.push(DocVersion {
+                version: i + 1,
+                alias,
+                fetched_at,
+                content_hash,
+                content,
+            });
+        }
+        Ok(versions)
+    }
+
     // ── Search ────────────────────────────────────────────────────────────────
 
     /// Full-text search over inline doc content using FTS5 + BM25 ranking.
@@ -280,6 +361,17 @@ fn row_to_doc(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocRecord> {
         tags,
         content: row.get(5)?,
     })
+}
+
+/// Compute the first 8 hex chars of a FNV-1a hash of `content` — fast and
+/// collision-resistant enough to detect content changes between fetches.
+pub fn content_hash(content: &str) -> String {
+    let mut h: u64 = 14695981039346656037;
+    for byte in content.as_bytes() {
+        h ^= *byte as u64;
+        h = h.wrapping_mul(1099511628211);
+    }
+    format!("{:016x}", h)[..8].to_string()
 }
 
 /// Path to the SQLite database file.

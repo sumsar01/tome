@@ -46,6 +46,11 @@ pub async fn fetch(cfg: &Config, db: &Db, alias: &str, use_cache: bool) -> Resul
     // Fetch live
     let content = fetch_live(cfg, &doc).await?;
 
+    // Record in version history (skips if content unchanged)
+    if let Err(e) = db.record_version(alias, &content) {
+        tracing::warn!("Failed to record version for '{alias}': {e}");
+    }
+
     // Store in cache
     if cfg.cache.enabled {
         if let Err(e) = cache::set(alias, &content, cfg.cache.ttl_seconds) {

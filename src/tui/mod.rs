@@ -1,5 +1,6 @@
 pub mod app;
 pub mod browser;
+pub mod history;
 pub mod markdown;
 pub mod reader;
 pub mod theme;
@@ -75,6 +76,7 @@ where
         terminal.draw(|f| match app.screen {
             Screen::Browser => browser::draw(f, app),
             Screen::Reader => reader::draw(f, app),
+            Screen::History => history::draw(f, app),
         })?;
 
         if event::poll(std::time::Duration::from_millis(POLL_INTERVAL_MS))? {
@@ -94,6 +96,7 @@ where
                 match app.screen {
                     Screen::Browser => browser::handle_key(app, key).await?,
                     Screen::Reader => reader::handle_key(app, key).await?,
+                    Screen::History => history::handle_key(app, key).await?,
                 }
             }
         }

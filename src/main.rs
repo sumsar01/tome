@@ -65,6 +65,22 @@ enum Command {
         /// Doc alias to refresh
         alias: String,
     },
+    /// Show fetch history for a doc
+    History {
+        /// Doc alias
+        alias: String,
+    },
+    /// Show a diff between two versions of a doc
+    Diff {
+        /// Doc alias
+        alias: String,
+        /// First version index (default: second-to-last)
+        #[arg(long, default_value = "0")]
+        v1: usize,
+        /// Second version index (default: last)
+        #[arg(long, default_value = "0")]
+        v2: usize,
+    },
     /// Save a local markdown file or URL as an inline doc
     Add {
         /// Short unique alias (kebab-case, e.g. "fastify-plugins")
@@ -205,6 +221,33 @@ async fn main() -> Result<()> {
             let content = sources::fetch(&cfg, &db, &alias, false).await?;
             println!("Refreshed '{alias}' ({} bytes).", content.len());
         }
+        Command::History { alias } => {
+            let versions = db.list_versions(&alias)?;
+            if versions.is_empty() {
+                eprintln!("No history for '{alias}'. Fetch the doc at least once with `tome get` or `tome refresh`.");
+            } else {
+                println!("{:<4} {:<28} {:<10} ALIAS", "#", "FETCHED AT", "HASH");
+                println!("{}", "-".repeat(60));
+                for v in &versions {
+                    println!("{:<4} {:<28} {:<10} {}", v.version, v.fetched_at, v.content_hash, v.alias);
+                }
+            }
+        }
+        Command::Diff { alias, v1, v2 } => {
+            let versions = db.list_versions(&alias)?;
+            if versions.len() < 2 {
+                anyhow::bail!("Need at least 2 versions to diff. Run `tome refresh {alias}` to fetch a new version.");
+            }
+            // 0 means "use default": v1 = second-to-last, v2 = last
+            let idx1 = if v1 == 0 { versions.len() - 2 } else { v1 - 1 };
+            let idx2 = if v2 == 0 { versions.len() - 1 } else { v2 - 1 };
+            let a = versions.get(idx1).ok_or_else(|| anyhow::anyhow!("Version {} not found", idx1 + 1))?;
+            let b = versions.get(idx2).ok_or_else(|| anyhow::anyhow!("Version {} not found", idx2 + 1))?;
+            println!("--- {} v{} ({})", alias, a.version, a.fetched_at);
+            println!("+++ {} v{} ({})", alias, b.version, b.fetched_at);
+            println!();
+            print_unified_diff(&a.content, &b.content);
+        }
         Command::Add { alias, file, url, tags } => {
             let tags_vec: Vec<String> = tags
                 .unwrap_or_default()
@@ -278,4 +321,82 @@ fn strip_html(html: &str) -> String {
     }
     // Collapse whitespace runs
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Print a simple unified-style diff of two text blobs.
+/// Uses an LCS-based approach: lines unique to `a` are shown as `-`, new in `b` as `+`.
+/// Context lines (unchanged) shown as ` `. Only changed hunks + 3 context lines printed.
+fn print_unified_diff(a: &str, b: &str) {
+    let a_lines: Vec<&str> = a.lines().collect();
+    let b_lines: Vec<&str> = b.lines().collect();
+
+    // Build edit sequence with a simple O(n*m) LCS DP — fine for docs (< 10k lines).
+    let m = a_lines.len();
+    let n = b_lines.len();
+
+    // dp[i][j] = length of LCS of a[..i] and b[..j]
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            if a_lines[i - 1] == b_lines[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack to produce edit operations: ('=', line), ('-', line), ('+', line)
+    let mut ops: Vec<(char, &str)> = Vec::new();
+    let (mut i, mut j) = (m, n);
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && a_lines[i - 1] == b_lines[j - 1] {
+            ops.push(('=', a_lines[i - 1]));
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+            ops.push(('+', b_lines[j - 1]));
+            j -= 1;
+        } else {
+            ops.push(('-', a_lines[i - 1]));
+            i -= 1;
+        }
+    }
+    ops.reverse();
+
+    // Print with context (3 lines around changes)
+    const CTX: usize = 3;
+    let changed: Vec<bool> = ops.iter().map(|(op, _)| *op != '=').collect();
+
+    let mut printed = vec![false; ops.len()];
+    for (k, changed_k) in changed.iter().enumerate() {
+        if *changed_k {
+            let start = k.saturating_sub(CTX);
+            let end = (k + CTX + 1).min(ops.len());
+            for p in printed.iter_mut().take(end).skip(start) { *p = true; }
+        }
+    }
+
+    let mut last_printed: Option<usize> = None;
+    for (k, (op, line)) in ops.iter().enumerate() {
+        if !printed[k] {
+            continue;
+        }
+        if let Some(last) = last_printed {
+            if k > last + 1 {
+                println!("@@ ... @@");
+            }
+        }
+        let prefix = match op {
+            '-' => "-",
+            '+' => "+",
+            _ => " ",
+        };
+        println!("{}{}", prefix, line);
+        last_printed = Some(k);
+    }
+
+    if last_printed.is_none() {
+        println!("(no differences)");
+    }
 }
