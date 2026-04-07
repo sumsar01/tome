@@ -173,7 +173,6 @@ impl Db {
     }
 
     /// Remove a doc by alias. Returns true if a row was deleted.
-    #[allow(dead_code)]
     pub fn remove_doc(&self, alias: &str) -> Result<bool> {
         let conn = self.inner.lock().unwrap();
         let n = conn
@@ -199,7 +198,6 @@ impl Db {
     }
 
     /// Check whether an alias exists.
-    #[allow(dead_code)]
     pub fn alias_exists(&self, alias: &str) -> bool {
         let conn = self.inner.lock().unwrap();
         conn.query_row(
@@ -321,8 +319,11 @@ mod tests {
     #[test]
     fn duplicate_alias_errors() {
         let db = Db::open_in_memory().unwrap();
-        db.add_doc(&make_doc("bar", SOURCE_INLINE, Some("a"))).unwrap();
-        assert!(db.add_doc(&make_doc("bar", SOURCE_INLINE, Some("b"))).is_err());
+        db.add_doc(&make_doc("bar", SOURCE_INLINE, Some("a")))
+            .unwrap();
+        assert!(db
+            .add_doc(&make_doc("bar", SOURCE_INLINE, Some("b")))
+            .is_err());
     }
 
     #[test]
@@ -365,7 +366,8 @@ mod tests {
     #[test]
     fn remove_doc() {
         let db = Db::open_in_memory().unwrap();
-        db.add_doc(&make_doc("del", SOURCE_INLINE, Some("bye"))).unwrap();
+        db.add_doc(&make_doc("del", SOURCE_INLINE, Some("bye")))
+            .unwrap();
         assert!(db.alias_exists("del"));
         db.remove_doc("del").unwrap();
         assert!(!db.alias_exists("del"));

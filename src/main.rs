@@ -52,6 +52,14 @@ enum Command {
     },
     /// Start the MCP stdio server for AI agent use
     Mcp,
+    /// Remove a registered doc by alias
+    Remove {
+        /// Doc alias to remove
+        alias: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
     /// Save a local markdown file or URL as an inline doc
     Add {
         /// Short unique alias (kebab-case, e.g. "fastify-plugins")
@@ -167,6 +175,22 @@ async fn main() -> Result<()> {
         },
         Command::Mcp => {
             mcp::serve(cfg, db).await?;
+        }
+        Command::Remove { alias, force } => {
+            if !db.alias_exists(&alias) {
+                anyhow::bail!("No doc with alias '{}' found.", alias);
+            }
+            if !force {
+                eprint!("Remove '{alias}'? [y/N] ");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Aborted.");
+                    return Ok(());
+                }
+            }
+            db.remove_doc(&alias)?;
+            println!("Removed '{alias}'.");
         }
         Command::Add { alias, file, url, tags } => {
             let tags_vec: Vec<String> = tags
