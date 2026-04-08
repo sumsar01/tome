@@ -75,6 +75,27 @@ rpassword = "7"
 # Base64 decoding (GitHub API responses)
 base64 = "0.22"
 
+# GUI (optional — enabled by default via the "gui" feature)
+eframe = { version = "0.34", optional = true }
+egui = { version = "0.34", optional = true }
+egui_commonmark = { version = "0.23", features = ["better_syntax_highlighting", "fetch"], optional = true }
+egui_extras = { version = "0.34", features = ["image", "svg"], optional = true }
+image = { version = "0.25", features = ["png", "jpeg", "webp"], optional = true }
+open = { version = "5", optional = true }
+poll-promise = { version = "0.3", optional = true }
+
+[features]
+default = ["gui"]
+gui = [
+    "dep:eframe",
+    "dep:egui",
+    "dep:egui_commonmark",
+    "dep:egui_extras",
+    "dep:image",
+    "dep:open",
+    "dep:poll-promise",
+]
+
 [profile.release]
 strip = true
 opt-level = 3

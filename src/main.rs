@@ -10,6 +10,8 @@ mod paths;
 mod sources;
 mod tui;
 mod util;
+#[cfg(feature = "gui")]
+mod gui;
 
 #[derive(Parser)]
 #[command(name = "tome", version, about = "A docs reader for humans and AI")]
@@ -21,6 +23,10 @@ struct Cli {
     /// Can also be set via the TOME_PROFILE environment variable.
     #[arg(long, global = true, value_name = "PROFILE")]
     profile: Option<String>,
+    /// Open the graphical UI (egui) instead of the terminal UI
+    #[cfg(feature = "gui")]
+    #[arg(long, global = true)]
+    gui: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -165,13 +171,13 @@ async fn main() -> Result<()> {
         config::Config::load()?
     };
 
-    // Only enable logging for non-TUI commands — tracing output to stderr
+    // Only enable logging for non-TUI/GUI commands — tracing output to stderr
     // corrupts the alternate screen used by the TUI.
-    let is_tui = matches!(
+    let is_interactive = matches!(
         cli.command,
         None | Some(Command::Browse) | Some(Command::Read { .. })
     );
-    if !is_tui {
+    if !is_interactive {
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::from_default_env()
@@ -185,8 +191,22 @@ async fn main() -> Result<()> {
     let db = db::Db::open()?;
     cfg.migrate_docs_to_db(&db)?;
 
+    // Resolve whether the GUI flag was set (only available with the "gui" feature).
+    #[cfg(feature = "gui")]
+    let use_gui = cli.gui;
+    #[cfg(not(feature = "gui"))]
+    let use_gui = false;
+
     match cli.command.unwrap_or(Command::Browse) {
+        Command::Browse if use_gui => {
+            #[cfg(feature = "gui")]
+            gui::run(cfg, db).await?;
+        }
         Command::Browse => tui::run(cfg, db).await?,
+        Command::Read { alias } if use_gui => {
+            #[cfg(feature = "gui")]
+            gui::run_reader(cfg, db, &alias).await?;
+        }
         Command::Read { alias } => tui::run_reader(cfg, db, &alias).await?,
         Command::Get { alias, no_cache } => cmd::get(&cfg, &db, &alias, no_cache).await?,
         Command::List => cmd::list(&db)?,
