@@ -4,7 +4,7 @@ use egui::Context;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
 use crate::{
-    config::Config,
+    config::{self, Config},
     db::Db,
     sources,
     tui::{markdown::extract_headings, theme::ThemeName},
@@ -50,6 +50,14 @@ pub struct GuiApp {
     pub reader_loading: bool,
     /// Cached alias currently loaded in the reader (avoids re-fetching same doc).
     pub reader_alias: Option<String>,
+    /// Pending scroll delta (px) to apply next frame; reset to 0 after applied.
+    pub reader_scroll_delta: f32,
+    /// Current absolute scroll offset, tracked so we can jump to top/bottom.
+    pub reader_scroll_offset: f32,
+    /// Set to true for one frame to jump to the very top.
+    pub reader_scroll_to_top: bool,
+    /// Set to true for one frame to jump to the very bottom.
+    pub reader_scroll_to_bottom: bool,
 
     // ── Table of contents ─────────────────────────────────────────────────────
     pub toc: Vec<(u16, String)>,
@@ -71,10 +79,15 @@ pub struct GuiApp {
 
 impl GuiApp {
     pub fn new(cfg: Config, db: Db) -> Self {
-        let doc_aliases = db.list_docs(None).unwrap_or_default()
+        let doc_aliases: Vec<String> = db
+            .list_docs(None)
+            .unwrap_or_default()
             .into_iter()
             .map(|r| r.alias)
             .collect();
+
+        // Start with the first item selected so j/k navigation works immediately.
+        let selected = if doc_aliases.is_empty() { None } else { Some(0) };
 
         let theme_name = ThemeName::from_str(&cfg.ui.theme).unwrap_or_default();
         let gui_theme = GuiTheme::from_name(&theme_name);
@@ -87,13 +100,17 @@ impl GuiApp {
             theme_name,
             gui_theme,
             doc_aliases,
-            selected: None,
+            selected,
             filter: String::new(),
             focus: Focus::Browser,
             reader_content: None,
             reader_title: String::new(),
             reader_loading: false,
             reader_alias: None,
+            reader_scroll_delta: 0.0,
+            reader_scroll_offset: 0.0,
+            reader_scroll_to_top: false,
+            reader_scroll_to_bottom: false,
             toc: Vec::new(),
             toc_visible: true,
             toc_scroll_to: None,
@@ -112,9 +129,12 @@ impl GuiApp {
             return self.doc_aliases.iter().map(|s| s.as_str()).collect();
         }
         let matcher = SkimMatcherV2::default();
-        let mut scored: Vec<(&str, i64)> = self.doc_aliases.iter()
+        let mut scored: Vec<(&str, i64)> = self
+            .doc_aliases
+            .iter()
             .filter_map(|alias| {
-                matcher.fuzzy_match(alias, &self.filter)
+                matcher
+                    .fuzzy_match(alias, &self.filter)
                     .map(|score| (alias.as_str(), score))
             })
             .collect();
@@ -127,10 +147,8 @@ impl GuiApp {
     /// Trigger an async fetch of `alias`. Results arrive via `fetch_rx`.
     pub fn open_doc(&mut self, alias: &str, ctx: Context) {
         // Skip re-fetching if already loaded.
-        if self.reader_alias.as_deref() == Some(alias) {
-            if self.reader_content.is_some() {
-                return;
-            }
+        if self.reader_alias.as_deref() == Some(alias) && self.reader_content.is_some() {
+            return;
         }
 
         self.reader_title = alias.to_string();
@@ -138,6 +156,7 @@ impl GuiApp {
         self.reader_content = None;
         self.reader_alias = Some(alias.to_string());
         self.toc = Vec::new();
+        self.reader_scroll_to_top = true; // reset scroll when opening a new doc
 
         let alias = alias.to_string();
         let cfg = self.cfg.clone();
@@ -145,7 +164,8 @@ impl GuiApp {
         let tx = self.fetch_tx.clone();
 
         tokio::spawn(async move {
-            let result = sources::fetch(&cfg, &db, &alias, false).await
+            let result = sources::fetch(&cfg, &db, &alias, false)
+                .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(FetchResult { alias, content: result });
             ctx.request_repaint();
@@ -184,9 +204,8 @@ impl GuiApp {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = msg.into();
-        self.status_expires = Some(
-            std::time::Instant::now() + std::time::Duration::from_secs(3),
-        );
+        self.status_expires =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
     }
 
     pub fn tick_status(&mut self) {
@@ -203,6 +222,19 @@ impl GuiApp {
     pub fn go_back(&mut self) {
         self.reader_content = None;
         self.reader_loading = false;
+        self.reader_scroll_delta = 0.0;
         self.focus = Focus::Browser;
+    }
+
+    pub fn reader_is_open(&self) -> bool {
+        self.reader_content.is_some() || self.reader_loading
+    }
+
+    /// Pre-warm credential caches so keychain prompts fire before the GUI window
+    /// opens (same behaviour as the TUI). Errors are silently ignored — sources
+    /// that don't need credentials are unaffected.
+    pub fn prewarm_credentials() {
+        let _ = config::auth::get_github_token();
+        let _ = config::auth::get_confluence_credentials();
     }
 }

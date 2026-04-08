@@ -89,10 +89,11 @@ impl GuiTheme {
                 ),
             }
         } else {
+            // Light theme: clear panel separation and strong-enough contrast
             (
-                Color32::from_rgb(248, 248, 252),
-                Color32::from_rgb(240, 240, 248),
-                Color32::from_rgb(230, 230, 235),
+                Color32::from_rgb(252, 252, 255), // near-white bg
+                Color32::from_rgb(225, 228, 242), // noticeably darker sidebar
+                Color32::from_rgb(208, 212, 232), // code block bg
             )
         };
 
@@ -102,7 +103,13 @@ impl GuiTheme {
             bg_panel,
             bg_code,
             fg: ratatui_to_egui(t.fg),
-            fg_dim: ratatui_to_egui(t.fg_dim),
+            // For the light theme, Color::Gray (128,128,128) is too low-contrast
+            // on a near-white background. Use a darker value instead.
+            fg_dim: if matches!(name, ThemeName::Light) {
+                Color32::from_rgb(85, 88, 110)
+            } else {
+                ratatui_to_egui(t.fg_dim)
+            },
             accent: ratatui_to_egui(t.accent),
             accent_light: ratatui_to_egui(t.accent_light),
             source: ratatui_to_egui(t.source),

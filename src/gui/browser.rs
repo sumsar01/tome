@@ -1,4 +1,4 @@
-use egui::{Color32, CornerRadius, Frame, Key, Margin, RichText, ScrollArea, Sense, TextEdit, Ui};
+use egui::{Color32, CornerRadius, Frame, Margin, RichText, ScrollArea, Sense, TextEdit, Ui};
 
 use super::app::{Focus, GuiApp};
 
@@ -53,6 +53,8 @@ pub fn show(ui: &mut Ui, app: &mut GuiApp, ctx: &egui::Context) {
         if response.gained_focus() {
             app.focus = Focus::Filter;
         }
+        // Lost focus: only relinquish if focus wasn't explicitly taken by
+        // another widget — check that we're not switching to Filter from here.
         if response.lost_focus() && app.focus == Focus::Filter {
             app.focus = Focus::Browser;
         }
@@ -61,43 +63,6 @@ pub fn show(ui: &mut Ui, app: &mut GuiApp, ctx: &egui::Context) {
     ui.add_space(6.0);
     ui.separator();
     ui.add_space(4.0);
-
-    // ── Keyboard shortcuts ────────────────────────────────────────────────────
-    if app.focus != Focus::Filter {
-        let aliases = app.filtered_aliases();
-        let count = aliases.len();
-
-        ctx.input(|i| {
-            if i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::J) {
-                app.selected = Some(match app.selected {
-                    None => 0,
-                    Some(n) => (n + 1).min(count.saturating_sub(1)),
-                });
-            }
-            if i.key_pressed(Key::ArrowUp) || i.key_pressed(Key::K) {
-                app.selected = Some(match app.selected {
-                    None => 0,
-                    Some(n) => n.saturating_sub(1),
-                });
-            }
-            if i.key_pressed(Key::Slash) {
-                app.focus = Focus::Filter;
-            }
-        });
-    }
-
-    // Escape clears filter or exits filter mode
-    if app.focus == Focus::Filter {
-        ctx.input(|i| {
-            if i.key_pressed(Key::Escape) {
-                if !app.filter.is_empty() {
-                    app.filter.clear();
-                } else {
-                    app.focus = Focus::Browser;
-                }
-            }
-        });
-    }
 
     // ── Doc count label ────────────────────────────────────────────────────────
     let aliases = app.filtered_aliases();
@@ -114,10 +79,9 @@ pub fn show(ui: &mut Ui, app: &mut GuiApp, ctx: &egui::Context) {
     });
     ui.add_space(4.0);
 
-    let reader_open = app.reader_content.is_some() || app.reader_loading;
     let current_alias = app.reader_alias.clone();
 
-    // Clone to satisfy borrow checker
+    // Clone alias list to satisfy borrow checker
     let aliases: Vec<String> = aliases.iter().map(|s| s.to_string()).collect();
 
     // ── Doc list ──────────────────────────────────────────────────────────────
@@ -129,15 +93,15 @@ pub fn show(ui: &mut Ui, app: &mut GuiApp, ctx: &egui::Context) {
                 let is_selected = app.selected == Some(i);
                 let is_open = current_alias.as_deref() == Some(alias.as_str());
 
-                let row_bg = if is_selected && !reader_open {
-                    theme.accent.linear_multiply(0.18)
+                let row_bg = if is_selected {
+                    theme.accent.linear_multiply(0.20)
                 } else if is_open {
                     theme.accent.linear_multiply(0.10)
                 } else {
                     Color32::TRANSPARENT
                 };
 
-                let text_color = if is_selected && !reader_open {
+                let text_color = if is_selected {
                     theme.fg
                 } else if is_open {
                     theme.accent_light
@@ -145,43 +109,46 @@ pub fn show(ui: &mut Ui, app: &mut GuiApp, ctx: &egui::Context) {
                     theme.fg_dim
                 };
 
-                Frame::new()
+                let row = Frame::new()
                     .fill(row_bg)
                     .inner_margin(Margin::symmetric(8, 3))
                     .corner_radius(CornerRadius::same(4))
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
-                        let label = ui.add(
+                        ui.add(
                             egui::Label::new(
                                 RichText::new(alias.as_str()).color(text_color).size(13.0),
                             )
                             .sense(Sense::click())
                             .truncate(),
-                        );
-
-                        if label.clicked() {
-                            app.selected = Some(i);
-                            let ctx_clone = ctx.clone();
-                            app.open_doc(alias, ctx_clone);
-                        }
-
-                        if label.double_clicked() {
-                            app.focus = Focus::Reader;
-                        }
+                        )
                     });
+
+                let response = row.inner;
+
+                // Scroll selected item into view
+                if is_selected {
+                    response.scroll_to_me(None);
+                }
+
+                if response.clicked() {
+                    app.selected = Some(i);
+                    app.open_doc(alias, ctx.clone());
+                }
+
+                if response.double_clicked() {
+                    app.focus = Focus::Reader;
+                }
             }
         });
 
     // Open selected doc on Enter
-    if app.focus == Focus::Browser || app.focus == Focus::Filter {
-        let enter_pressed = ctx.input(|i| i.key_pressed(Key::Enter));
-        if enter_pressed {
-            if let Some(idx) = app.selected {
-                if let Some(alias) = aliases.get(idx) {
-                    let ctx_clone = ctx.clone();
-                    app.open_doc(alias, ctx_clone);
-                    app.focus = Focus::Reader;
-                }
+    let enter_pressed = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+    if enter_pressed && (app.focus == Focus::Browser || app.focus == Focus::Filter) {
+        if let Some(idx) = app.selected {
+            if let Some(alias) = aliases.get(idx) {
+                app.open_doc(alias, ctx.clone());
+                app.focus = Focus::Reader;
             }
         }
     }
