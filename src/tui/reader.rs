@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Flex, Layout},
@@ -14,7 +14,6 @@ use super::markdown::markdown_to_text;
 // ── Draw ──────────────────────────────────────────────────────────────────────
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let theme = &app.theme;
     let area = f.area();
 
     // Outer vertical: content area + help bar
@@ -27,26 +26,43 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let help_area = vertical[1];
 
     // ── Help bar ─────────────────────────────────────────────────────────────
-    let k = &app.cfg.ui.keys;
-    let scroll_label = format!("{}/{}", k.scroll_down, k.scroll_up);
-    let toc_action = if app.toc_visible { "Hide ToC" } else { "Show ToC" };
-    // Build owned key strings so they live long enough for help_bar borrows
-    let mut owned_keys: Vec<(String, &str)> = vec![
-        (scroll_label, "Scroll"),
-        ("PgDn/PgUp".to_string(), "Page"),
-    ];
-    if !app.toc.is_empty() {
-        owned_keys.push((k.toggle_toc.clone(), toc_action));
-    }
-    owned_keys.push((k.copy.clone(), "Copy"));
-    owned_keys.push((k.history.clone(), "History"));
-    owned_keys.push((k.open_url.clone(), "Open URL"));
-    owned_keys.push((k.info.clone(), "Info"));
-    owned_keys.push((k.cycle_theme.clone(), "Theme"));
-    owned_keys.push(("q/Esc".to_string(), "Back"));
+    {
+        let theme = &app.theme;
+        let k = &app.cfg.ui.keys;
 
-    let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    f.render_widget(Paragraph::new(app.status_or_help(theme, &refs)), help_area);
+        if app.reader_search_mode {
+            let prompt = format!("  / {}_", app.reader_search_query);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(prompt, theme.filter_style()))),
+                help_area,
+            );
+        } else {
+            let scroll_label = format!("{}/{}", k.scroll_down, k.scroll_up);
+            let toc_action = if app.toc_visible { "Hide ToC" } else { "Show ToC" };
+            let mut owned_keys: Vec<(String, &str)> = vec![
+                (scroll_label, "Scroll"),
+                ("^d/^u".to_string(), "½Page"),
+                ("gg/G".to_string(), "Jump"),
+                ("PgDn/PgUp".to_string(), "Page"),
+            ];
+            if !app.toc.is_empty() {
+                owned_keys.push((k.toggle_toc.clone(), toc_action));
+            }
+            owned_keys.push((k.copy.clone(), "Copy"));
+            owned_keys.push((k.history.clone(), "History"));
+            owned_keys.push((k.open_url.clone(), "Open URL"));
+            owned_keys.push((k.info.clone(), "Info"));
+            owned_keys.push((k.cycle_theme.clone(), "Theme"));
+            if !app.reader_search_matches.is_empty() {
+                owned_keys.push(("/n/N".to_string(), "Search"));
+            } else {
+                owned_keys.push(("/".to_string(), "Search"));
+            }
+            owned_keys.push(("q/Esc".to_string(), "Back"));
+            let refs: Vec<(&str, &str)> = owned_keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+            f.render_widget(Paragraph::new(app.status_or_help(theme, &refs)), help_area);
+        }
+    }
 
     // ── Metadata info overlay ─────────────────────────────────────────────────
     if app.show_info {
@@ -92,8 +108,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // ── Reading pane ──────────────────────────────────────────────────────────
     let rendered = markdown_to_text(&app.reader_content, &app.theme);
-    // Store total lines so scrollbar can compute position
+    // Store total lines and viewport height so scrollbar and vim motions work
     app.reader_total_lines = rendered.lines.len() as u16;
+    // Subtract 2 for the top/bottom borders of the reading pane block
+    app.reader_viewport_height = reading_col_area.height.saturating_sub(2);
 
     let title = format!(" {} ", app.reader_title);
     let content = Paragraph::new(rendered)
@@ -102,7 +120,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .title(title)
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(theme.border_style()),
+                .border_style(app.theme.border_style()),
         )
         .wrap(Wrap { trim: false })
         .scroll((app.reader_scroll, 0));
@@ -280,6 +298,29 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use crate::config::KeysConfig;
     let keys = &app.cfg.ui.keys;
 
+    // ── Search prompt mode ────────────────────────────────────────────────────
+    if app.reader_search_mode {
+        match key.code {
+            KeyCode::Esc => {
+                app.reader_search_mode = false;
+                app.status.clear();
+            }
+            KeyCode::Enter => {
+                app.reader_search_mode = false;
+                app.status.clear();
+                run_search(app);
+            }
+            KeyCode::Backspace => {
+                app.reader_search_query.pop();
+            }
+            KeyCode::Char(c) => {
+                app.reader_search_query.push(c);
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     // Resolve configured key codes (errors impossible here — validated at startup)
     let k_down       = KeysConfig::parse_key(&keys.scroll_down).unwrap_or(KeyCode::Char('j'));
     let k_up         = KeysConfig::parse_key(&keys.scroll_up).unwrap_or(KeyCode::Char('k'));
@@ -291,7 +332,41 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let k_theme      = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
 
     let code = key.code;
+    let mods = key.modifiers;
 
+    // Any non-g key clears a pending 'g' (stray first press of gg sequence)
+    let was_pending_g = app.pending_g;
+    if code != KeyCode::Char('g') {
+        app.pending_g = false;
+    }
+
+    // ── Ctrl-modified keys ────────────────────────────────────────────────────
+    if mods.contains(KeyModifiers::CONTROL) {
+        let half = app.reader_viewport_height / 2;
+        let full = app.reader_viewport_height;
+        match code {
+            KeyCode::Char('d') => {
+                let step = half.max(1);
+                app.reader_scroll = app.reader_scroll.saturating_add(step);
+            }
+            KeyCode::Char('u') => {
+                let step = half.max(1);
+                app.reader_scroll = app.reader_scroll.saturating_sub(step);
+            }
+            KeyCode::Char('f') => {
+                let step = full.max(1);
+                app.reader_scroll = app.reader_scroll.saturating_add(step);
+            }
+            KeyCode::Char('b') => {
+                let step = full.max(1);
+                app.reader_scroll = app.reader_scroll.saturating_sub(step);
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    // ── Normal keys ───────────────────────────────────────────────────────────
     if code == k_down || code == KeyCode::Down {
         app.reader_scroll = app.reader_scroll.saturating_add(1);
     } else if code == k_up || code == KeyCode::Up {
@@ -300,6 +375,43 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         app.reader_scroll = app.reader_scroll.saturating_add(PAGE_SCROLL_STEP);
     } else if code == KeyCode::PageUp {
         app.reader_scroll = app.reader_scroll.saturating_sub(PAGE_SCROLL_STEP);
+    } else if code == KeyCode::Char('G') {
+        // Jump to bottom (last screenful)
+        app.reader_scroll = app.reader_total_lines.saturating_sub(app.reader_viewport_height);
+    } else if code == KeyCode::Char('g') {
+        if was_pending_g {
+            // gg → jump to top
+            app.reader_scroll = 0;
+        } else {
+            app.pending_g = true;
+        }
+    } else if code == KeyCode::Char('/') {
+        // Enter search mode
+        app.reader_search_mode = true;
+        app.reader_search_query.clear();
+    } else if code == KeyCode::Char('n') {
+        // Next search match
+        if !app.reader_search_matches.is_empty() {
+            app.reader_search_idx = (app.reader_search_idx + 1) % app.reader_search_matches.len();
+            app.reader_scroll = app.reader_search_matches[app.reader_search_idx];
+            app.set_transient_status(format!(
+                "Match {}/{}",
+                app.reader_search_idx + 1,
+                app.reader_search_matches.len()
+            ));
+        }
+    } else if code == KeyCode::Char('N') {
+        // Previous search match
+        if !app.reader_search_matches.is_empty() {
+            let len = app.reader_search_matches.len();
+            app.reader_search_idx = (app.reader_search_idx + len - 1) % len;
+            app.reader_scroll = app.reader_search_matches[app.reader_search_idx];
+            app.set_transient_status(format!(
+                "Match {}/{}",
+                app.reader_search_idx + 1,
+                app.reader_search_matches.len()
+            ));
+        }
     } else if code == k_toc {
         app.toc_visible = !app.toc_visible;
     } else if code == k_copy {
@@ -324,4 +436,38 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ── Search helpers ────────────────────────────────────────────────────────────
+
+/// Scan reader_content for lines matching reader_search_query (case-insensitive).
+/// Populates reader_search_matches and jumps to the first match.
+fn run_search(app: &mut App) {
+    let query = app.reader_search_query.to_lowercase();
+    if query.is_empty() {
+        app.reader_search_matches.clear();
+        return;
+    }
+
+    app.reader_search_matches = app
+        .reader_content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.to_lowercase().contains(&query))
+        .map(|(i, _)| i as u16)
+        .collect();
+
+    app.reader_search_idx = 0;
+
+    if app.reader_search_matches.is_empty() {
+        app.set_transient_status(format!("No matches for '{}'", app.reader_search_query));
+    } else {
+        app.reader_scroll = app.reader_search_matches[0];
+        app.set_transient_status(format!(
+            "{} match{} for '{}'",
+            app.reader_search_matches.len(),
+            if app.reader_search_matches.len() == 1 { "" } else { "es" },
+            app.reader_search_query
+        ));
+    }
 }

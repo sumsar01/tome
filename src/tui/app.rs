@@ -48,10 +48,24 @@ pub struct App {
     pub reader_scroll: u16,
     /// Total rendered lines (used for scrollbar percentage)
     pub reader_total_lines: u16,
+    /// Visible viewport height in lines (used for half-page / full-page scroll)
+    pub reader_viewport_height: u16,
     /// Table-of-contents entries: (heading_level 1-6, heading_text)
     pub toc: Vec<(u16, String)>,
     /// Whether the ToC sidebar is visible
     pub toc_visible: bool,
+
+    // ── Vim navigation state ───────────────────────────────────────────────────
+    /// Pending 'g' press — true after first 'g', waiting for second to trigger gg
+    pub pending_g: bool,
+    /// Whether the in-reader search prompt is active
+    pub reader_search_mode: bool,
+    /// Current search query string
+    pub reader_search_query: String,
+    /// Sorted list of line numbers (0-indexed) that contain a match
+    pub reader_search_matches: Vec<u16>,
+    /// Index into reader_search_matches pointing at the current match
+    pub reader_search_idx: usize,
 
     // ── Global ─────────────────────────────────────────────────────────────────
     /// Status message shown at bottom (errors, notifications)
@@ -98,8 +112,14 @@ impl App {
             reader_title: String::new(),
             reader_scroll: 0,
             reader_total_lines: 0,
+            reader_viewport_height: 0,
             toc: Vec::new(),
             toc_visible: true,
+            pending_g: false,
+            reader_search_mode: false,
+            reader_search_query: String::new(),
+            reader_search_matches: Vec::new(),
+            reader_search_idx: 0,
             status: String::new(),
             status_expires_at: None,
             history_entries: Vec::new(),
@@ -181,6 +201,12 @@ impl App {
                 self.reader_title = alias.to_string();
                 self.reader_scroll = 0;
                 self.reader_total_lines = 0;
+                self.reader_viewport_height = 0;
+                self.pending_g = false;
+                self.reader_search_mode = false;
+                self.reader_search_query.clear();
+                self.reader_search_matches.clear();
+                self.reader_search_idx = 0;
                 self.screen = Screen::Reader;
                 self.status = String::new();
             }
