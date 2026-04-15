@@ -73,6 +73,7 @@ pub struct KeysConfig {
     pub filter: String,
     pub navigate_down: String,
     pub navigate_up: String,
+    pub copy_alias: String,
 }
 
 impl Default for KeysConfig {
@@ -89,6 +90,7 @@ impl Default for KeysConfig {
             filter: "/".to_string(),
             navigate_down: "j".to_string(),
             navigate_up: "k".to_string(),
+            copy_alias: "y".to_string(),
         }
     }
 }
@@ -133,6 +135,7 @@ impl KeysConfig {
             ("filter", &self.filter),
             ("navigate_down", &self.navigate_down),
             ("navigate_up", &self.navigate_up),
+            ("copy_alias", &self.copy_alias),
         ];
         for (name, val) in &fields {
             Self::parse_key(val).map_err(|e| anyhow::anyhow!("[ui.keys].{}: {}", name, e))?;

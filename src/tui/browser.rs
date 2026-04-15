@@ -94,6 +94,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         (nav_label, "Navigate"),
         ("Enter".to_string(), "Open"),
         (k.filter.clone(), "Filter"),
+        (k.copy_alias.clone(), "Copy name"),
         (k.cycle_theme.clone(), "Theme"),
         ("q".to_string(), "Quit"),
     ];
@@ -215,10 +216,11 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use crate::config::KeysConfig;
     let keys = &app.cfg.ui.keys;
 
-    let k_down   = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
-    let k_up     = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
-    let k_filter = KeysConfig::parse_key(&keys.filter).unwrap_or(KeyCode::Char('/'));
-    let k_theme  = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+    let k_down      = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
+    let k_up        = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
+    let k_filter    = KeysConfig::parse_key(&keys.filter).unwrap_or(KeyCode::Char('/'));
+    let k_theme     = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+    let k_copy_alias = KeysConfig::parse_key(&keys.copy_alias).unwrap_or(KeyCode::Char('y'));
 
     if app.filtering {
         match key.code {
@@ -274,6 +276,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
     } else if code == k_theme {
         app.cycle_theme();
+    } else if code == k_copy_alias {
+        let aliases = app.filtered_aliases();
+        if let Some(alias) = aliases.get(app.selected) {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(alias.to_string());
+                app.set_transient_status(format!("Copied: {}", alias));
+            }
+        }
     }
 
     Ok(())
