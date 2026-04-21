@@ -64,6 +64,18 @@ pub fn remove(db: &db::Db, alias: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// `tome delete` — alias for remove.
+pub fn delete(db: &db::Db, alias: &str, force: bool) -> Result<()> {
+    remove(db, alias, force)
+}
+
+/// `tome rename` — rename a registered doc alias.
+pub fn rename(db: &db::Db, old_alias: &str, new_alias: &str) -> Result<()> {
+    db.rename_doc(old_alias, new_alias)?;
+    println!("Renamed '{old_alias}' → '{new_alias}'.");
+    Ok(())
+}
+
 /// `tome refresh` — re-fetch a doc and refresh its cache.
 pub async fn refresh(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<()> {
     if !db.alias_exists(alias) {

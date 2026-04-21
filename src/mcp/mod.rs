@@ -66,6 +66,20 @@ pub struct DiffParams {
     pub v2: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeleteParams {
+    /// The doc alias to delete
+    pub alias: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RenameParams {
+    /// The current doc alias
+    pub old_alias: String,
+    /// The new doc alias (kebab-case, no spaces)
+    pub new_alias: String,
+}
+
 #[tool_router]
 impl TomeServer {
     #[allow(clippy::new_without_default)]
@@ -188,8 +202,7 @@ impl TomeServer {
 
     /// Show a unified diff between two versions of a doc.
     #[tool(description = "Show a unified diff between two versions of a doc. v1 and v2 are 1-based version indices from tome_history. Defaults to diffing the last two versions.")]
-    async fn tome_diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
-        let versions = match self.db.list_versions(&params.alias) {
+    async fn tome_diff(&self, Parameters(params): Parameters<DiffParams>) -> String {        let versions = match self.db.list_versions(&params.alias) {
             Ok(v) => v,
             Err(e) => return format!("Error: {e}"),
         };
@@ -212,6 +225,29 @@ impl TomeServer {
         };
         unified_diff_string(&params.alias, a, b)
     }
+
+    /// Delete a doc from tome by alias.
+    #[tool(description = "Delete a doc from tome by alias. Returns a confirmation message or an error if the alias does not exist.")]
+    async fn tome_delete(&self, Parameters(params): Parameters<DeleteParams>) -> String {
+        match self.db.remove_doc(&params.alias) {
+            Ok(true) => format!("Deleted '{}' from tome.", params.alias),
+            Ok(false) => format!("Error: no doc with alias '{}' found.", params.alias),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    /// Rename a doc alias in tome.
+    #[tool(description = "Rename a doc alias in tome. Updates both the doc registry and its version history atomically. Errors if old_alias does not exist or new_alias already exists.")]
+    async fn tome_rename(&self, Parameters(params): Parameters<RenameParams>) -> String {
+        let new_alias = params.new_alias.trim().to_string();
+        if new_alias.is_empty() || new_alias.contains(' ') {
+            return "Error: new_alias must be non-empty and contain no spaces (use kebab-case, e.g. 'fastify-plugins')".to_string();
+        }
+        match self.db.rename_doc(&params.old_alias, &new_alias) {
+            Ok(()) => format!("Renamed '{}' → '{}'.", params.old_alias, new_alias),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
 }
 
 #[tool_handler]
@@ -222,6 +258,7 @@ impl ServerHandler for TomeServer {
                 "tome gives you access to internal documentation. \
                  Use tome_list to see available docs, tome_get to fetch a doc by alias, \
                  tome_search to find relevant docs, tome_add to save new docs, \
+                 tome_delete to remove docs, tome_rename to rename a doc alias, \
                  tome_history to see fetch history, and tome_diff to compare versions.",
             )
     }

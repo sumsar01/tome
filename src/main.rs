@@ -115,6 +115,21 @@ enum Command {
         #[arg(long, default_value = "0")]
         v2: usize,
     },
+    /// Delete a registered doc by alias (alias for remove)
+    Delete {
+        /// Doc alias to delete
+        alias: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Rename a registered doc alias
+    Rename {
+        /// Current doc alias
+        old_alias: String,
+        /// New doc alias
+        new_alias: String,
+    },
     /// Save a local markdown file or URL as an inline doc
     Add {
         /// Short unique alias (kebab-case, e.g. "fastify-plugins")
@@ -209,6 +224,8 @@ async fn main() -> Result<()> {
         Command::History { alias } => cmd::history(&db, &alias)?,
         Command::Diff { alias, v1, v2 } => cmd::diff(&db, &alias, v1, v2)?,
         Command::Add { alias, file, url, tags } => cmd::add(&db, &alias, file, url, tags).await?,
+        Command::Delete { alias, force } => cmd::delete(&db, &alias, force)?,
+        Command::Rename { old_alias, new_alias } => cmd::rename(&db, &old_alias, &new_alias)?,
     }
 
     Ok(())
