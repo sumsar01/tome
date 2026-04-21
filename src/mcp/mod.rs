@@ -73,6 +73,12 @@ pub struct DeleteParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RefreshParams {
+    /// The doc alias to re-fetch
+    pub alias: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RenameParams {
     /// The current doc alias
     pub old_alias: String,
@@ -236,6 +242,21 @@ impl TomeServer {
         }
     }
 
+    /// Re-fetch a doc and refresh its cached content.
+    #[tool(description = "Re-fetch a doc and refresh its cached content. Use when a doc may be stale and you want the latest version. Returns a confirmation with byte count or an error if the alias does not exist.")]
+    async fn tome_refresh(&self, Parameters(params): Parameters<RefreshParams>) -> String {
+        if !self.db.alias_exists(&params.alias) {
+            return format!("Error: no doc with alias '{}' found.", params.alias);
+        }
+        if let Err(e) = crate::cache::invalidate(&params.alias) {
+            return format!("Error invalidating cache: {e}");
+        }
+        match sources::fetch(&self.cfg, &self.db, &params.alias, false).await {
+            Ok(content) => format!("Refreshed '{}' ({} bytes).", params.alias, content.len()),
+            Err(e) => format!("Error refreshing '{}': {e}", params.alias),
+        }
+    }
+
     /// Rename a doc alias in tome.
     #[tool(description = "Rename a doc alias in tome. Updates both the doc registry and its version history atomically. Errors if old_alias does not exist or new_alias already exists.")]
     async fn tome_rename(&self, Parameters(params): Parameters<RenameParams>) -> String {
@@ -258,7 +279,8 @@ impl ServerHandler for TomeServer {
                 "tome gives you access to internal documentation. \
                  Use tome_list to see available docs, tome_get to fetch a doc by alias, \
                  tome_search to find relevant docs, tome_add to save new docs, \
-                 tome_delete to remove docs, tome_rename to rename a doc alias, \
+                 tome_refresh to re-fetch a stale doc, tome_delete to remove docs, \
+                 tome_rename to rename a doc alias, \
                  tome_history to see fetch history, and tome_diff to compare versions.",
             )
     }
