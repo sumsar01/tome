@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+mod backup;
 mod cache;
 mod cmd;
 mod config;
@@ -223,15 +224,30 @@ async fn main() -> Result<()> {
             CacheAction::Status => cache::status()?,
         },
         Command::Mcp => mcp::serve(cfg, db).await?,
-        Command::Remove { alias, namespace, force } => cmd::remove(&db, alias.as_deref(), namespace.as_deref(), force)?,
-        Command::Refresh { alias } => cmd::refresh(&cfg, &db, &alias).await?,
+        Command::Remove { alias, namespace, force } => {
+            cmd::remove(&db, alias.as_deref(), namespace.as_deref(), force)?;
+            backup::run(&cfg.backup, &db, "remove");
+        }
+        Command::Refresh { alias } => {
+            cmd::refresh(&cfg, &db, &alias).await?;
+            backup::run(&cfg.backup, &db, "refresh");
+        }
         Command::Open { alias } => cmd::open(&cfg, &db, &alias)?,
         Command::Export { format } => cmd::export(&db, &format)?,
-        Command::Tag { alias, tag } => cmd::tag(&db, &alias, &tag)?,
-        Command::Untag { alias, tag } => cmd::untag(&db, &alias, &tag)?,
+        Command::Tag { alias, tag } => {
+            cmd::tag(&db, &alias, &tag)?;
+            backup::run(&cfg.backup, &db, "tag");
+        }
+        Command::Untag { alias, tag } => {
+            cmd::untag(&db, &alias, &tag)?;
+            backup::run(&cfg.backup, &db, "untag");
+        }
         Command::History { alias } => cmd::history(&db, &alias)?,
         Command::Diff { alias, v1, v2 } => cmd::diff(&db, &alias, v1, v2)?,
-        Command::Add { alias, file, url, tags, namespace } => cmd::add(&db, &alias, file, url, tags, namespace).await?,
+        Command::Add { alias, file, url, tags, namespace } => {
+            cmd::add(&db, &alias, file, url, tags, namespace).await?;
+            backup::run(&cfg.backup, &db, "add");
+        }
         Command::SetNamespace { alias, namespace, clear } => {
             let ns = if clear { None } else { namespace.as_deref() };
             cmd::set_namespace(&db, &alias, ns)?;

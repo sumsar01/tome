@@ -7,6 +7,35 @@ use std::path::PathBuf;
 use crate::db::SOURCE_INLINE;
 use crate::paths;
 
+/// Backup configuration — auto-export docs to a file after every write.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupConfig {
+    /// Path to write the JSON export (e.g. "/path/to/git-repo/tome-backup.json").
+    /// If empty or not set, backups are disabled.
+    #[serde(default)]
+    pub path: String,
+    /// Automatically run `git add <path> && git commit` after each export.
+    #[serde(default = "default_true")]
+    pub git: bool,
+    /// Also run `git push` after committing (default: false).
+    #[serde(default)]
+    pub git_push: bool,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            git: true,
+            git_push: false,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Top-level config loaded from the platform config file.
 /// Contains only sources and cache settings.
 /// Doc registrations live in the SQLite database (`tome.db`).
@@ -18,6 +47,8 @@ pub struct Config {
     pub cache: CacheConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub backup: BackupConfig,
     /// Legacy [[docs]] entries — read during migration only, then removed from disk.
     #[serde(default, skip_serializing)]
     pub docs: Vec<DocConfig>,
@@ -353,12 +384,19 @@ impl Config {
             ui: &'a UiConfig,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             sources: &'a Vec<SourceConfig>,
+            #[serde(skip_serializing_if = "backup_is_empty")]
+            backup: &'a BackupConfig,
+        }
+
+        fn backup_is_empty(b: &BackupConfig) -> bool {
+            b.path.is_empty()
         }
 
         let clean = CleanConfig {
             cache: &self.cache,
             ui: &self.ui,
             sources: &self.sources,
+            backup: &self.backup,
         };
 
         let header = "# tome configuration\n# Docs registry has moved to tome.db\n# Sources and cache settings only.\n\n";
@@ -447,4 +485,12 @@ theme = "dark"
 # name = "my-notes"
 # type = "local"
 # root = "/Users/you/docs/"
+
+# --- Backup ---
+# Auto-export all docs to a JSON file after every write (add, remove, rename, tag, etc.).
+# Set `path` to a file inside a git repo to keep your notes safe.
+# [backup]
+# path = "/Users/you/notes-backup/tome-backup.json"
+# git = true        # auto git add + commit (default: true)
+# git_push = false  # also git push after committing (default: false)
 "#;
