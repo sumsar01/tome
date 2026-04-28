@@ -73,7 +73,7 @@ pub struct App {
 impl App {
     pub fn new(cfg: Config, db: Db) -> Self {
         let doc_aliases = db
-            .list_docs(None)
+            .list_docs(None, None)
             .unwrap_or_default()
             .into_iter()
             .map(|d| d.alias)

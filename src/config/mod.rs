@@ -276,7 +276,7 @@ impl Config {
         // Only auto-migrate if the DB is fresh (no existing docs table data).
         // This prevents re-migrating on every load if the user manually added
         // [[docs]] entries back to config.toml.
-        let existing_count: usize = db.list_docs(None)?.len();
+        let existing_count: usize = db.list_docs(None, None)?.len();
         if existing_count > 0 {
             // DB already has data — skip migration to avoid duplicates.
             return Ok(());
@@ -314,6 +314,7 @@ impl Config {
                 path: doc.path.clone(),
                 tags: doc.tags.clone(),
                 content,
+                namespace: None,
             };
 
             match db.add_doc(&record) {

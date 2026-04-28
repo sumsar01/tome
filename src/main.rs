@@ -43,7 +43,14 @@ enum Command {
         no_cache: bool,
     },
     /// List all configured doc aliases
-    List,
+    List {
+        /// Filter by tag (substring match)
+        #[arg(long)]
+        tag: Option<String>,
+        /// Filter by namespace (exact match, e.g. "whiteaway")
+        #[arg(long)]
+        namespace: Option<String>,
+    },
     /// Fuzzy search across all docs
     Search {
         /// Search query
@@ -61,10 +68,13 @@ enum Command {
     },
     /// Start the MCP stdio server for AI agent use
     Mcp,
-    /// Remove a registered doc by alias
+    /// Remove a registered doc by alias, or bulk-remove all docs in a namespace
     Remove {
-        /// Doc alias to remove
-        alias: String,
+        /// Doc alias to remove (omit if using --namespace)
+        alias: Option<String>,
+        /// Remove all docs with this namespace instead of a single alias
+        #[arg(long)]
+        namespace: Option<String>,
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
@@ -129,6 +139,19 @@ enum Command {
         /// Comma-separated tags (inferred from headings if omitted)
         #[arg(long)]
         tags: Option<String>,
+        /// Workplace or context label (e.g. "whiteaway", "personal")
+        #[arg(long)]
+        namespace: Option<String>,
+    },
+    /// Assign or clear the namespace on an existing doc
+    SetNamespace {
+        /// Doc alias
+        alias: String,
+        /// Namespace to assign (e.g. "whiteaway"). Omit to clear.
+        namespace: Option<String>,
+        /// Clear the namespace (same as omitting <namespace>)
+        #[arg(long)]
+        clear: bool,
     },
 }
 
@@ -189,7 +212,7 @@ async fn main() -> Result<()> {
         Command::Browse => tui::run(cfg, db).await?,
         Command::Read { alias } => tui::run_reader(cfg, db, &alias).await?,
         Command::Get { alias, no_cache } => cmd::get(&cfg, &db, &alias, no_cache).await?,
-        Command::List => cmd::list(&db)?,
+        Command::List { tag, namespace } => cmd::list(&db, tag.as_deref(), namespace.as_deref())?,
         Command::Search { query } => cmd::search(&cfg, &db, &query).await?,
         Command::Auth { provider } => match provider {
             AuthProvider::Confluence { email } => config::auth::store_confluence_token(&email)?,
@@ -200,7 +223,7 @@ async fn main() -> Result<()> {
             CacheAction::Status => cache::status()?,
         },
         Command::Mcp => mcp::serve(cfg, db).await?,
-        Command::Remove { alias, force } => cmd::remove(&db, &alias, force)?,
+        Command::Remove { alias, namespace, force } => cmd::remove(&db, alias.as_deref(), namespace.as_deref(), force)?,
         Command::Refresh { alias } => cmd::refresh(&cfg, &db, &alias).await?,
         Command::Open { alias } => cmd::open(&cfg, &db, &alias)?,
         Command::Export { format } => cmd::export(&db, &format)?,
@@ -208,7 +231,11 @@ async fn main() -> Result<()> {
         Command::Untag { alias, tag } => cmd::untag(&db, &alias, &tag)?,
         Command::History { alias } => cmd::history(&db, &alias)?,
         Command::Diff { alias, v1, v2 } => cmd::diff(&db, &alias, v1, v2)?,
-        Command::Add { alias, file, url, tags } => cmd::add(&db, &alias, file, url, tags).await?,
+        Command::Add { alias, file, url, tags, namespace } => cmd::add(&db, &alias, file, url, tags, namespace).await?,
+        Command::SetNamespace { alias, namespace, clear } => {
+            let ns = if clear { None } else { namespace.as_deref() };
+            cmd::set_namespace(&db, &alias, ns)?;
+        }
     }
 
     Ok(())

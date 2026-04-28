@@ -39,6 +39,8 @@ pub struct DocRecord {
     pub tags: Vec<String>,
     /// Full markdown content — populated for inline docs, None for remote
     pub content: Option<String>,
+    /// Workplace / context label (e.g. "whiteaway", "personal"). NULL means unset.
+    pub namespace: Option<String>,
 }
 
 /// Flat view used for listing (no content)
@@ -47,6 +49,8 @@ pub struct DocInfo {
     pub alias: String,
     pub source: String,
     pub tags: Vec<String>,
+    /// Workplace / context label
+    pub namespace: Option<String>,
 }
 
 /// A search result
@@ -111,12 +115,13 @@ impl Db {
             PRAGMA foreign_keys=ON;
 
             CREATE TABLE IF NOT EXISTS docs (
-                alias    TEXT PRIMARY KEY,
-                source   TEXT NOT NULL,
-                page_id  TEXT,
-                path     TEXT,
-                tags     TEXT NOT NULL DEFAULT '[]',
-                content  TEXT
+                alias     TEXT PRIMARY KEY,
+                source    TEXT NOT NULL,
+                page_id   TEXT,
+                path      TEXT,
+                tags      TEXT NOT NULL DEFAULT '[]',
+                content   TEXT,
+                namespace TEXT
             );
 
             CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
@@ -162,6 +167,11 @@ impl Db {
             ",
         )
         .context("Failed to initialise database schema")?;
+
+        // Migrate existing databases: add namespace column if absent.
+        // ALTER TABLE … ADD COLUMN errors if the column exists; we ignore that.
+        let _ = conn.execute_batch("ALTER TABLE docs ADD COLUMN namespace TEXT;");
+
         Ok(())
     }
 
@@ -186,8 +196,8 @@ impl Db {
             );
         }
         conn.execute(
-            "INSERT INTO docs (alias, source, page_id, path, tags, content)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO docs (alias, source, page_id, path, tags, content, namespace)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 doc.alias,
                 doc.source,
@@ -195,6 +205,7 @@ impl Db {
                 doc.path,
                 tags_json,
                 doc.content,
+                doc.namespace,
             ],
         )
         .with_context(|| format!("Failed to insert doc '{}'", doc.alias))?;
@@ -216,7 +227,7 @@ impl Db {
     pub fn find_doc(&self, alias: &str) -> Result<Option<DocRecord>> {
         let conn = self.inner.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT alias, source, page_id, path, tags, content FROM docs WHERE alias = ?1",
+            "SELECT alias, source, page_id, path, tags, content, namespace FROM docs WHERE alias = ?1",
         )?;
         let mut rows = stmt.query(params![alias])?;
         if let Some(row) = rows.next()? {
@@ -238,24 +249,30 @@ impl Db {
             > 0
     }
 
-    /// List all docs, optionally filtered by tag.
-    pub fn list_docs(&self, tag_filter: Option<&str>) -> Result<Vec<DocInfo>> {
+    /// List all docs, optionally filtered by tag and/or namespace.
+    pub fn list_docs(&self, tag_filter: Option<&str>, namespace_filter: Option<&str>) -> Result<Vec<DocInfo>> {
         let conn = self.inner.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT alias, source, tags FROM docs ORDER BY alias ASC")?;
+        let mut stmt = conn.prepare("SELECT alias, source, tags, namespace FROM docs ORDER BY alias ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })?;
 
         let mut docs = Vec::new();
         for row in rows {
-            let (alias, source, tags_json) = row?;
+            let (alias, source, tags_json, namespace) = row?;
             let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
             if let Some(filter) = tag_filter {
                 if !tags.iter().any(|t| t.contains(filter)) {
+                    continue;
+                }
+            }
+            if let Some(ns) = namespace_filter {
+                if namespace.as_deref() != Some(ns) {
                     continue;
                 }
             }
@@ -263,6 +280,7 @@ impl Db {
                 alias,
                 source,
                 tags,
+                namespace,
             });
         }
         Ok(docs)
@@ -275,6 +293,17 @@ impl Db {
         let n = conn.execute(
             "UPDATE docs SET tags = ?1 WHERE alias = ?2",
             params![tags_json, alias],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Update (or clear) the namespace for a doc.
+    /// Pass `None` to clear the namespace.
+    pub fn update_namespace(&self, alias: &str, namespace: Option<&str>) -> Result<bool> {
+        let conn = self.inner.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE docs SET namespace = ?1 WHERE alias = ?2",
+            params![namespace, alias],
         )?;
         Ok(n > 0)
     }
@@ -379,6 +408,7 @@ fn row_to_doc(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocRecord> {
         path: row.get(3)?,
         tags,
         content: row.get(5)?,
+        namespace: row.get(6)?,
     })
 }
 
@@ -412,6 +442,7 @@ mod tests {
             path: None,
             tags: vec!["test".to_string()],
             content: content.map(str::to_string),
+            namespace: None,
         }
     }
 
@@ -445,9 +476,9 @@ mod tests {
         doc2.tags = vec!["python".to_string()];
         db.add_doc(&doc2).unwrap();
 
-        let all = db.list_docs(None).unwrap();
+        let all = db.list_docs(None, None).unwrap();
         assert_eq!(all.len(), 2);
-        let filtered = db.list_docs(Some("rust")).unwrap();
+        let filtered = db.list_docs(Some("rust"), None).unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].alias, "a");
     }

@@ -26,6 +26,8 @@ pub struct TomeServer {
 pub struct ListParams {
     /// Optional tag to filter docs by (e.g. "migration", "infra")
     pub tag: Option<String>,
+    /// Optional namespace to filter docs by (e.g. "whiteaway", "personal")
+    pub namespace: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -48,6 +50,10 @@ pub struct AddParams {
     pub content: String,
     /// Tags for filtering and search. If omitted, tags are inferred from headings.
     pub tags: Option<Vec<String>>,
+    /// Workplace or context label for this doc (e.g. "whiteaway", "personal").
+    /// Use to group docs by employer or life context so they can be filtered or
+    /// bulk-removed later with `tome remove --namespace <ns>`. Omit for general knowledge.
+    pub namespace: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -78,9 +84,9 @@ impl TomeServer {
     }
 
     /// List all available documentation aliases registered in tome.
-    #[tool(description = "List all available documentation aliases registered in tome. Returns alias, source, and tags for each doc.")]
+    #[tool(description = "List all available documentation aliases registered in tome. Returns alias, source, namespace, and tags for each doc. Filter by tag or namespace.")]
     async fn tome_list(&self, Parameters(params): Parameters<ListParams>) -> String {
-        let docs = match self.db.list_docs(params.tag.as_deref()) {
+        let docs = match self.db.list_docs(params.tag.as_deref(), params.namespace.as_deref()) {
             Ok(d) => d,
             Err(e) => return format!("Error listing docs: {e}"),
         };
@@ -92,9 +98,10 @@ impl TomeServer {
         let mut out = String::from("Available docs:\n\n");
         for doc in &docs {
             out.push_str(&format!(
-                "- **{}** (source: {}) tags: {}\n",
+                "- **{}** (source: {}, namespace: {}) tags: {}\n",
                 doc.alias,
                 doc.source,
+                doc.namespace.as_deref().unwrap_or("-"),
                 doc.tags.join(", ")
             ));
         }
@@ -153,6 +160,7 @@ impl TomeServer {
             path: None,
             tags: tags.clone(),
             content: Some(params.content),
+            namespace: params.namespace.clone(),
         };
 
         match self.db.add_doc(&record) {

@@ -3,21 +3,22 @@ use anyhow::Result;
 use crate::{config, db, sources};
 
 /// Width of the separator line used in tabular CLI output.
-const TABLE_SEPARATOR_WIDTH: usize = 60;
+const TABLE_SEPARATOR_WIDTH: usize = 72;
 
 /// `tome list` — print all registered doc aliases.
-pub fn list(db: &db::Db) -> Result<()> {
-    let docs = db.list_docs(None)?;
+pub fn list(db: &db::Db, tag_filter: Option<&str>, namespace_filter: Option<&str>) -> Result<()> {
+    let docs = db.list_docs(tag_filter, namespace_filter)?;
     if docs.is_empty() {
         eprintln!("No docs configured. Use `tome add` to add docs.");
     } else {
-        println!("{:<24} {:<16} TAGS", "ALIAS", "SOURCE");
+        println!("{:<24} {:<16} {:<16} TAGS", "ALIAS", "SOURCE", "NAMESPACE");
         println!("{}", "-".repeat(TABLE_SEPARATOR_WIDTH));
         for doc in docs {
             println!(
-                "{:<24} {:<16} {}",
+                "{:<24} {:<16} {:<16} {}",
                 doc.alias,
                 doc.source,
+                doc.namespace.as_deref().unwrap_or("-"),
                 doc.tags.join(", ")
             );
         }
@@ -45,8 +46,37 @@ pub async fn search(cfg: &config::Config, db: &db::Db, query: &str) -> Result<()
     Ok(())
 }
 
-/// `tome remove` — remove a registered doc.
-pub fn remove(db: &db::Db, alias: &str, force: bool) -> Result<()> {
+/// `tome remove` — remove a registered doc (by alias) or all docs in a namespace.
+pub fn remove(db: &db::Db, alias: Option<&str>, namespace: Option<&str>, force: bool) -> Result<()> {
+    if let Some(ns) = namespace {
+        // Bulk delete by namespace
+        let docs = db.list_docs(None, Some(ns))?;
+        if docs.is_empty() {
+            eprintln!("No docs with namespace '{ns}' found.");
+            return Ok(());
+        }
+        if !force {
+            eprint!(
+                "Remove {} doc(s) with namespace '{ns}'? [y/N] ",
+                docs.len()
+            );
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                eprintln!("Aborted.");
+                return Ok(());
+            }
+        }
+        let mut removed = 0usize;
+        for doc in &docs {
+            db.remove_doc(&doc.alias)?;
+            removed += 1;
+        }
+        println!("Removed {removed} doc(s) with namespace '{ns}'.");
+        return Ok(());
+    }
+
+    let alias = alias.ok_or_else(|| anyhow::anyhow!("Provide either an alias or --namespace <ns>"))?;
     if !db.alias_exists(alias) {
         anyhow::bail!("No doc with alias '{}' found.", alias);
     }
@@ -61,6 +91,22 @@ pub fn remove(db: &db::Db, alias: &str, force: bool) -> Result<()> {
     }
     db.remove_doc(alias)?;
     println!("Removed '{alias}'.");
+    Ok(())
+}
+
+/// `tome set-namespace` — assign or clear the namespace on a doc.
+pub fn set_namespace(db: &db::Db, alias: &str, namespace: Option<&str>) -> Result<()> {
+    if !db.alias_exists(alias) {
+        anyhow::bail!("No doc with alias '{}' found.", alias);
+    }
+    let updated = db.update_namespace(alias, namespace)?;
+    if !updated {
+        anyhow::bail!("Failed to update namespace for '{alias}'.");
+    }
+    match namespace {
+        Some(ns) => println!("Set namespace '{ns}' on '{alias}'."),
+        None => println!("Cleared namespace on '{alias}'."),
+    }
     Ok(())
 }
 
@@ -87,7 +133,7 @@ pub fn open(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<()> {
 
 /// `tome export` — export all docs to stdout.
 pub fn export(db: &db::Db, format: &str) -> Result<()> {
-    let docs = db.list_docs(None)?;
+    let docs = db.list_docs(None, None)?;
     match format {
         "json" => {
             let mut records = Vec::new();
@@ -99,6 +145,7 @@ pub fn export(db: &db::Db, format: &str) -> Result<()> {
                         "page_id": doc.page_id,
                         "path": doc.path,
                         "tags": doc.tags,
+                        "namespace": doc.namespace,
                         "content": doc.content,
                     }));
                 }
@@ -197,6 +244,7 @@ pub async fn add(
     file: Option<String>,
     url: Option<String>,
     tags: Option<String>,
+    namespace: Option<String>,
 ) -> Result<()> {
     let tags_vec: Vec<String> = tags
         .unwrap_or_default()
@@ -227,6 +275,7 @@ pub async fn add(
         path: None,
         tags: final_tags.clone(),
         content: Some(content),
+        namespace,
     })?;
     println!(
         "Saved '{}' with tags: {}",

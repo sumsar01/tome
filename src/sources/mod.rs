@@ -140,7 +140,7 @@ pub async fn search(cfg: &Config, db: &Db, query: &str) -> Result<Vec<SearchResu
 
     // 2. Fuzzy match across alias + tags for all docs (catches remote docs with no stored content)
     let matcher = SkimMatcherV2::default();
-    for doc in db.list_docs(None)? {
+    for doc in db.list_docs(None, None)? {
         if seen.contains(&doc.alias) {
             continue; // already in results from FTS5
         }
