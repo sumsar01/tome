@@ -46,6 +46,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             Span::styled("   (o,o)", owl_style),
             Span::raw("   "),
             Span::styled("T o m e", title_style),
+            Span::raw("  "),
+            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), dim_style),
         ]),
         Line::from(vec![
             Span::styled("   {`\"'}", owl_style),
