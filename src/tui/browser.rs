@@ -97,7 +97,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let nav_label = format!("{}/{}", k.navigate_down, k.navigate_up);
     let owned_keys: Vec<(String, &str)> = vec![
         (nav_label, "Navigate"),
-        ("Enter".to_string(), "Open"),
+        ("Enter/i".to_string(), "Open"),
         ("Space".to_string(), "Collapse"),
         (k.filter.clone(), "Filter"),
         (k.cycle_theme.clone(), "Theme"),
@@ -288,14 +288,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
             app.selected = 0;
             app.load_preview().await?;
         }
-    } else if code == KeyCode::Enter || code == KeyCode::Char(' ') {
+    } else if code == KeyCode::Enter || code == KeyCode::Char(' ') || code == KeyCode::Char('i') {
         if let Some(cat) = app.selected_header() {
             app.toggle_category(&cat.clone());
             // Keep selected on the header row; clamp if rows shrunk
             let new_count = app.build_list_rows().len();
             app.selected = app.selected.min(new_count.saturating_sub(1));
             app.load_preview().await?;
-        } else if code == KeyCode::Enter {
+        } else if code == KeyCode::Enter || code == KeyCode::Char('i') {
             if let Some(alias) = app.selected_alias() {
                 app.open_doc(&alias).await?;
             }
