@@ -8,13 +8,13 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+use super::app::{App, ListRow};
+use super::markdown::markdown_to_text;
+
 /// Percentage of screen width allocated to the doc list pane.
 const LIST_PANE_PCT: u16 = 35;
 /// Percentage of screen width allocated to the preview pane.
 const PREVIEW_PANE_PCT: u16 = 65;
-
-use super::app::App;
-use super::markdown::markdown_to_text;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let theme = &app.theme;
@@ -51,6 +51,11 @@ pub fn draw(f: &mut Frame, app: &App) {
             Span::styled("   {`\"'}", owl_style),
             Span::raw("   "),
             Span::styled("docs for humans & AI", Style::default().fg(theme.fg)),
+            Span::raw("  "),
+            Span::styled(
+                concat!("v", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(theme.fg_dim),
+            ),
         ]),
         Line::from(vec![
             Span::styled("   -\"-\"-", owl_style),
@@ -93,6 +98,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let owned_keys: Vec<(String, &str)> = vec![
         (nav_label, "Navigate"),
         ("Enter".to_string(), "Open"),
+        ("Space".to_string(), "Collapse"),
         (k.filter.clone(), "Filter"),
         (k.cycle_theme.clone(), "Theme"),
         ("q".to_string(), "Quit"),
@@ -116,47 +122,63 @@ pub fn draw(f: &mut Frame, app: &App) {
 
 fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let theme = &app.theme;
-    let aliases = app.filtered_aliases();
     let total = app.doc_aliases.len();
-    let shown = aliases.len();
+    let rows = app.build_list_rows();
 
-    let items: Vec<ListItem> = aliases
+    let items: Vec<ListItem> = rows
         .iter()
-        .map(|a| {
-            let doc = app.db.find_doc(a).ok().flatten();
-            let source = doc
-                .as_ref()
-                .map(|d| d.source.clone())
-                .unwrap_or_else(|| "?".to_string());
-            let tags = doc.as_ref().map(|d| d.tags.join(", ")).unwrap_or_default();
-
-            let mut spans = vec![
-                Span::styled(
-                    *a,
-                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(source, theme.source_style()),
-            ];
-            if !tags.is_empty() {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(tags, theme.dim_style()));
+        .map(|row| match row {
+            ListRow::Header(cat) => {
+                let collapsed = app.collapsed_categories.contains(cat);
+                let arrow = if collapsed { "▶" } else { "▼" };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{} {}", arrow, cat),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]))
             }
+            ListRow::Doc(alias) => {
+                let doc = app.db.find_doc(alias).ok().flatten();
+                let tags = doc.as_ref().map(|d| d.tags.join(", ")).unwrap_or_default();
+                let namespace = doc.as_ref().and_then(|d| d.namespace.clone());
 
-            ListItem::new(Line::from(spans))
+                let mut spans = vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        alias.clone(),
+                        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                    ),
+                ];
+                if let Some(ns) = namespace {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(
+                        format!("[{}]", ns),
+                        Style::default().fg(theme.accent).add_modifier(Modifier::DIM),
+                    ));
+                }
+                if !tags.is_empty() {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(tags, theme.dim_style()));
+                }
+                ListItem::new(Line::from(spans))
+            }
         })
         .collect();
 
     let mut list_state = ListState::default();
-    list_state.select(if aliases.is_empty() {
+    list_state.select(if rows.is_empty() {
         None
     } else {
-        Some(app.selected.min(aliases.len().saturating_sub(1)))
+        Some(app.selected.min(rows.len().saturating_sub(1)))
     });
 
-    // Title shows filtered count vs total
-    let list_title = if shown < total {
-        format!(" {}/{} docs ", shown, total)
+    // Title: show doc count (and filter count when active)
+    let doc_count = rows.iter().filter(|r| matches!(r, ListRow::Doc(_))).count();
+    let list_title = if !app.filter.is_empty() {
+        format!(" {}/{} docs ", doc_count, total)
     } else {
         format!(" {} docs ", total)
     };
@@ -245,8 +267,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         return Ok(());
     }
 
-    let aliases = app.filtered_aliases();
-    let count = aliases.len();
+    let rows = app.build_list_rows();
+    let count = rows.len();
     let code = key.code;
 
     if code == k_down || code == KeyCode::Down {
@@ -266,11 +288,17 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
             app.selected = 0;
             app.load_preview().await?;
         }
-    } else if code == KeyCode::Enter {
-        let aliases = app.filtered_aliases();
-        if let Some(alias) = aliases.get(app.selected) {
-            let alias = alias.to_string();
-            app.open_doc(&alias).await?;
+    } else if code == KeyCode::Enter || code == KeyCode::Char(' ') {
+        if let Some(cat) = app.selected_header() {
+            app.toggle_category(&cat.clone());
+            // Keep selected on the header row; clamp if rows shrunk
+            let new_count = app.build_list_rows().len();
+            app.selected = app.selected.min(new_count.saturating_sub(1));
+            app.load_preview().await?;
+        } else if code == KeyCode::Enter {
+            if let Some(alias) = app.selected_alias() {
+                app.open_doc(&alias).await?;
+            }
         }
     } else if code == k_theme {
         app.cycle_theme();
