@@ -116,35 +116,45 @@ fn draw_info(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(vec![
-        Span::styled("Alias:   ", Style::default().fg(theme.fg_dim)),
+        Span::styled("Alias:     ", Style::default().fg(theme.fg_dim)),
         Span::styled(alias.clone(), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
     ]));
 
     if let Ok(Some(doc)) = app.db.find_doc(alias) {
         lines.push(Line::from(vec![
-            Span::styled("Source:  ", Style::default().fg(theme.fg_dim)),
+            Span::styled("Source:    ", Style::default().fg(theme.fg_dim)),
             Span::styled(doc.source.clone(), Style::default().fg(theme.fg)),
         ]));
         if let Some(ref path) = doc.path {
             lines.push(Line::from(vec![
-                Span::styled("Path:    ", Style::default().fg(theme.fg_dim)),
+                Span::styled("Path:      ", Style::default().fg(theme.fg_dim)),
                 Span::styled(path.clone(), Style::default().fg(theme.fg)),
             ]));
         }
         if let Some(ref page_id) = doc.page_id {
             lines.push(Line::from(vec![
-                Span::styled("Page ID: ", Style::default().fg(theme.fg_dim)),
+                Span::styled("Page ID:   ", Style::default().fg(theme.fg_dim)),
                 Span::styled(page_id.clone(), Style::default().fg(theme.fg)),
             ]));
         }
+        let cat_str = doc.category.clone().unwrap_or_else(|| "(none)".to_string());
+        lines.push(Line::from(vec![
+            Span::styled("Category:  ", Style::default().fg(theme.fg_dim)),
+            Span::styled(cat_str, Style::default().fg(theme.fg)),
+        ]));
+        let ns_str = doc.namespace.clone().unwrap_or_else(|| "(none)".to_string());
+        lines.push(Line::from(vec![
+            Span::styled("Namespace: ", Style::default().fg(theme.fg_dim)),
+            Span::styled(ns_str, Style::default().fg(theme.fg)),
+        ]));
         let tag_str = if doc.tags.is_empty() { "(none)".to_string() } else { doc.tags.join(", ") };
         lines.push(Line::from(vec![
-            Span::styled("Tags:    ", Style::default().fg(theme.fg_dim)),
+            Span::styled("Tags:      ", Style::default().fg(theme.fg_dim)),
             Span::styled(tag_str, Style::default().fg(theme.fg)),
         ]));
         let size = app.reader_content.len();
         lines.push(Line::from(vec![
-            Span::styled("Size:    ", Style::default().fg(theme.fg_dim)),
+            Span::styled("Size:      ", Style::default().fg(theme.fg_dim)),
             Span::styled(format!("{} bytes", size), Style::default().fg(theme.fg)),
         ]));
     }
@@ -153,15 +163,15 @@ fn draw_info(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     if let Ok(versions) = app.db.list_versions(alias) {
         if let Some(last) = versions.last() {
             lines.push(Line::from(vec![
-                Span::styled("Fetched: ", Style::default().fg(theme.fg_dim)),
+                Span::styled("Fetched:   ", Style::default().fg(theme.fg_dim)),
                 Span::styled(last.fetched_at.clone(), Style::default().fg(theme.fg)),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("Hash:    ", Style::default().fg(theme.fg_dim)),
+                Span::styled("Hash:      ", Style::default().fg(theme.fg_dim)),
                 Span::styled(last.content_hash.clone(), Style::default().fg(theme.fg_dim)),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("History: ", Style::default().fg(theme.fg_dim)),
+                Span::styled("History:   ", Style::default().fg(theme.fg_dim)),
                 Span::styled(format!("{} version(s)", versions.len()), Style::default().fg(theme.fg)),
             ]));
         }

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
@@ -16,6 +17,13 @@ pub enum Screen {
     History,
 }
 
+/// A row in the grouped browser list — either a category header or a doc entry.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListRow {
+    Header(String),
+    Doc(String),
+}
+
 pub struct App {
     pub cfg: Config,
     pub db: Db,
@@ -26,12 +34,14 @@ pub struct App {
     // ── Browser state ──────────────────────────────────────────────────────────
     /// All doc aliases for the browser list
     pub doc_aliases: Vec<String>,
-    /// Currently selected index in browser list
+    /// Currently selected index in browser list (counts header rows + doc rows)
     pub selected: usize,
     /// Current filter string (from `/` search)
     pub filter: String,
     /// Whether filter input is active
     pub filtering: bool,
+    /// Set of category names that are currently collapsed
+    pub collapsed_categories: HashSet<String>,
 
     // ── Preview state (browser right pane) ────────────────────────────────────
     /// Alias currently loaded in the preview pane (to avoid redundant reloads)
@@ -92,6 +102,7 @@ impl App {
             selected: 0,
             filter: String::new(),
             filtering: false,
+            collapsed_categories: HashSet::new(),
             preview_alias: None,
             preview_content: None,
             reader_content: String::new(),
@@ -123,13 +134,92 @@ impl App {
         }
     }
 
+    /// Build the grouped list rows for the browser (header + doc rows, respecting collapse).
+    /// When a filter is active, returns flat filtered doc rows only (no headers).
+    pub fn build_list_rows(&self) -> Vec<ListRow> {
+        if !self.filter.is_empty() {
+            // Filter mode: flat list, no headers
+            return self
+                .filtered_aliases()
+                .into_iter()
+                .map(|a| ListRow::Doc(a.to_string()))
+                .collect();
+        }
+
+        // Grouped mode: fetch full DocInfo to get categories
+        let docs = self.db.list_docs(None, None).unwrap_or_default();
+
+        // Collect unique categories in sorted order; "Uncategorized" last
+        let mut categories: Vec<String> = {
+            let mut seen = std::collections::BTreeSet::new();
+            for d in &docs {
+                if let Some(ref cat) = d.category {
+                    seen.insert(cat.clone());
+                }
+            }
+            seen.into_iter().collect()
+        };
+        // Add uncategorized group at end if any docs lack a category
+        let has_uncategorized = docs.iter().any(|d| d.category.is_none());
+
+        let mut rows: Vec<ListRow> = Vec::new();
+
+        for cat in &categories {
+            rows.push(ListRow::Header(cat.clone()));
+            if !self.collapsed_categories.contains(cat) {
+                for d in docs.iter().filter(|d| d.category.as_deref() == Some(cat.as_str())) {
+                    rows.push(ListRow::Doc(d.alias.clone()));
+                }
+            }
+        }
+
+        if has_uncategorized {
+            let label = "Uncategorized".to_string();
+            rows.push(ListRow::Header(label.clone()));
+            if !self.collapsed_categories.contains(&label) {
+                for d in docs.iter().filter(|d| d.category.is_none()) {
+                    rows.push(ListRow::Doc(d.alias.clone()));
+                }
+            }
+        }
+
+        rows
+    }
+
+    /// Toggle collapse state for a category header.
+    pub fn toggle_category(&mut self, category: &str) {
+        if self.collapsed_categories.contains(category) {
+            self.collapsed_categories.remove(category);
+        } else {
+            self.collapsed_categories.insert(category.to_string());
+        }
+    }
+
+    /// Return the alias at the current selected position, if the row is a Doc row.
+    pub fn selected_alias(&self) -> Option<String> {
+        let rows = self.build_list_rows();
+        match rows.get(self.selected) {
+            Some(ListRow::Doc(alias)) => Some(alias.clone()),
+            _ => None,
+        }
+    }
+
+    /// Return the category header at the current selected position, if any.
+    pub fn selected_header(&self) -> Option<String> {
+        let rows = self.build_list_rows();
+        match rows.get(self.selected) {
+            Some(ListRow::Header(cat)) => Some(cat.clone()),
+            _ => None,
+        }
+    }
+
     /// Load the preview for the currently selected alias if it has changed.
     /// Should be called from handle_key after cursor movement.
     pub async fn load_preview(&mut self) -> Result<()> {
-        let aliases = self.filtered_aliases();
-        let alias = match aliases.get(self.selected.min(aliases.len().saturating_sub(1))) {
-            Some(a) => a.to_string(),
+        let alias = match self.selected_alias() {
+            Some(a) => a,
             None => {
+                // Selected row is a header or list is empty — clear preview
                 self.preview_alias = None;
                 self.preview_content = None;
                 return Ok(());
