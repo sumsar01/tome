@@ -300,6 +300,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
             if code == KeyCode::Char('i') {
                 app.open_doc(&alias).await?;
                 app.show_info = true;
+                app.info_from_browser = true;
             } else if code == KeyCode::Enter {
                 app.open_doc(&alias).await?;
             }

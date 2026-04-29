@@ -323,11 +323,19 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         app.open_source_in_browser();
     } else if code == k_info {
         app.show_info = !app.show_info;
+        if app.show_info {
+            app.info_from_browser = false;
+        }
     } else if code == k_theme {
         app.cycle_theme();
     } else if code == KeyCode::Char('q') || code == KeyCode::Esc {
         if app.show_info {
             app.show_info = false;
+            if app.info_from_browser {
+                app.info_from_browser = false;
+                app.status.clear();
+                app.go_back();
+            }
         } else {
             app.status.clear();
             app.go_back();

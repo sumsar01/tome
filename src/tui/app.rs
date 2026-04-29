@@ -78,6 +78,8 @@ pub struct App {
     pub diff_content: Option<String>,
     /// Whether to show the metadata info overlay
     pub show_info: bool,
+    /// When true, closing the info panel returns to Browser instead of staying in Reader
+    pub info_from_browser: bool,
 }
 
 impl App {
@@ -117,6 +119,7 @@ impl App {
             history_selected: 0,
             diff_content: None,
             show_info: false,
+            info_from_browser: false,
         }
     }
 
