@@ -489,8 +489,14 @@ theme = "dark"
 # --- Backup ---
 # Auto-export all docs to a JSON file after every write (add, remove, rename, tag, etc.).
 # Set `path` to a file inside a git repo to keep your notes safe.
+#
+# SECURITY WARNING: The backup file contains the full content of every doc stored
+# in tome, including internal documentation fetched from Confluence, private GitHub
+# repos, and inline notes. Only enable git_push = true with a PRIVATE repository.
+# tome will automatically block pushes to public GitHub repositories.
 # [backup]
 # path = "/Users/you/notes-backup/tome-backup.json"
 # git = true        # auto git add + commit (default: true)
 # git_push = false  # also git push after committing (default: false)
+#                   # WARNING: only use with a private repository!
 "#;
