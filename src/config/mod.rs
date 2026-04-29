@@ -346,6 +346,7 @@ impl Config {
                 tags: doc.tags.clone(),
                 content,
                 namespace: None,
+                category: None,
             };
 
             match db.add_doc(&record) {

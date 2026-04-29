@@ -41,6 +41,8 @@ pub struct DocRecord {
     pub content: Option<String>,
     /// Workplace / context label (e.g. "whiteaway", "personal"). NULL means unset.
     pub namespace: Option<String>,
+    /// Primary grouping category shown in the TUI browser
+    pub category: Option<String>,
 }
 
 /// Flat view used for listing (no content)
@@ -51,6 +53,7 @@ pub struct DocInfo {
     pub tags: Vec<String>,
     /// Workplace / context label
     pub namespace: Option<String>,
+    pub category: Option<String>,
 }
 
 /// A search result
@@ -171,6 +174,7 @@ impl Db {
         // Migrate existing databases: add namespace column if absent.
         // ALTER TABLE … ADD COLUMN errors if the column exists; we ignore that.
         let _ = conn.execute_batch("ALTER TABLE docs ADD COLUMN namespace TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE docs ADD COLUMN category TEXT;");
 
         Ok(())
     }
@@ -196,8 +200,8 @@ impl Db {
             );
         }
         conn.execute(
-            "INSERT INTO docs (alias, source, page_id, path, tags, content, namespace)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO docs (alias, source, page_id, path, tags, content, namespace, category)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 doc.alias,
                 doc.source,
@@ -206,6 +210,7 @@ impl Db {
                 tags_json,
                 doc.content,
                 doc.namespace,
+                doc.category,
             ],
         )
         .with_context(|| format!("Failed to insert doc '{}'", doc.alias))?;
@@ -227,7 +232,7 @@ impl Db {
     pub fn find_doc(&self, alias: &str) -> Result<Option<DocRecord>> {
         let conn = self.inner.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT alias, source, page_id, path, tags, content, namespace FROM docs WHERE alias = ?1",
+            "SELECT alias, source, page_id, path, tags, content, namespace, category FROM docs WHERE alias = ?1",
         )?;
         let mut rows = stmt.query(params![alias])?;
         if let Some(row) = rows.next()? {
@@ -252,19 +257,20 @@ impl Db {
     /// List all docs, optionally filtered by tag and/or namespace.
     pub fn list_docs(&self, tag_filter: Option<&str>, namespace_filter: Option<&str>) -> Result<Vec<DocInfo>> {
         let conn = self.inner.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT alias, source, tags, namespace FROM docs ORDER BY alias ASC")?;
+        let mut stmt = conn.prepare("SELECT alias, source, tags, namespace, category FROM docs ORDER BY alias ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?;
 
         let mut docs = Vec::new();
         for row in rows {
-            let (alias, source, tags_json, namespace) = row?;
+            let (alias, source, tags_json, namespace, category) = row?;
             let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
             if let Some(filter) = tag_filter {
                 if !tags.iter().any(|t| t.contains(filter)) {
@@ -281,6 +287,7 @@ impl Db {
                 source,
                 tags,
                 namespace,
+                category,
             });
         }
         Ok(docs)
@@ -306,6 +313,36 @@ impl Db {
             params![namespace, alias],
         )?;
         Ok(n > 0)
+    }
+
+    /// Update (or clear) the category for a doc.
+    pub fn update_category(&self, alias: &str, category: Option<&str>) -> Result<bool> {
+        let conn = self.inner.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE docs SET category = ?1 WHERE alias = ?2",
+            params![category, alias],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Rename a doc alias atomically (docs + doc_versions tables).
+    pub fn rename_doc(&self, old_alias: &str, new_alias: &str) -> Result<()> {
+        let conn = self.inner.lock().unwrap();
+        let old_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM docs WHERE alias = ?1",
+            params![old_alias], |r| r.get(0)).unwrap_or(0);
+        if old_exists == 0 {
+            anyhow::bail!("No doc with alias '{}' found.", old_alias);
+        }
+        let new_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM docs WHERE alias = ?1",
+            params![new_alias], |r| r.get(0)).unwrap_or(0);
+        if new_exists > 0 {
+            anyhow::bail!("alias '{}' already exists in tome.", new_alias);
+        }
+        conn.execute("UPDATE docs SET alias = ?1 WHERE alias = ?2", params![new_alias, old_alias])?;
+        conn.execute("UPDATE doc_versions SET alias = ?1 WHERE alias = ?2", params![new_alias, old_alias])?;
+        Ok(())
     }
 
     // ── Versioning ────────────────────────────────────────────────────────────
@@ -409,6 +446,7 @@ fn row_to_doc(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocRecord> {
         tags,
         content: row.get(5)?,
         namespace: row.get(6)?,
+        category: row.get(7)?,
     })
 }
 
@@ -443,6 +481,7 @@ mod tests {
             tags: vec!["test".to_string()],
             content: content.map(str::to_string),
             namespace: None,
+            category: None,
         }
     }
 
@@ -511,5 +550,21 @@ mod tests {
         assert!(db.alias_exists("del"));
         db.remove_doc("del").unwrap();
         assert!(!db.alias_exists("del"));
+    }
+
+    #[test]
+    fn category_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let mut doc = make_doc("cattest", SOURCE_INLINE, Some("content"));
+        doc.category = Some("Terraform Modules".to_string());
+        db.add_doc(&doc).unwrap();
+        let found = db.find_doc("cattest").unwrap().unwrap();
+        assert_eq!(found.category.as_deref(), Some("Terraform Modules"));
+        db.update_category("cattest", Some("API Docs")).unwrap();
+        let updated = db.find_doc("cattest").unwrap().unwrap();
+        assert_eq!(updated.category.as_deref(), Some("API Docs"));
+        db.update_category("cattest", None).unwrap();
+        let cleared = db.find_doc("cattest").unwrap().unwrap();
+        assert!(cleared.category.is_none());
     }
 }

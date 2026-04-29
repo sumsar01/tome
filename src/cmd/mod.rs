@@ -110,6 +110,33 @@ pub fn set_namespace(db: &db::Db, alias: &str, namespace: Option<&str>) -> Resul
     Ok(())
 }
 
+/// `tome categorize` — assign a category to a doc.
+pub fn categorize(db: &db::Db, alias: &str, category: &str) -> Result<()> {
+    if !db.alias_exists(alias) {
+        anyhow::bail!("No doc with alias '{}' found.", alias);
+    }
+    db.update_category(alias, Some(category))?;
+    println!("Set category '{}' on '{}'.", category, alias);
+    Ok(())
+}
+
+/// `tome uncategorize` — clear the category from a doc.
+pub fn uncategorize(db: &db::Db, alias: &str) -> Result<()> {
+    if !db.alias_exists(alias) {
+        anyhow::bail!("No doc with alias '{}' found.", alias);
+    }
+    db.update_category(alias, None)?;
+    println!("Cleared category from '{}'.", alias);
+    Ok(())
+}
+
+/// `tome rename` — rename a doc alias.
+pub fn rename(db: &db::Db, old_alias: &str, new_alias: &str) -> Result<()> {
+    db.rename_doc(old_alias, new_alias)?;
+    println!("Renamed '{}' → '{}'.", old_alias, new_alias);
+    Ok(())
+}
+
 /// `tome refresh` — re-fetch a doc and refresh its cache.
 pub async fn refresh(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<()> {
     if !db.alias_exists(alias) {
@@ -245,6 +272,7 @@ pub async fn add(
     url: Option<String>,
     tags: Option<String>,
     namespace: Option<String>,
+    category: Option<String>,
 ) -> Result<()> {
     let tags_vec: Vec<String> = tags
         .unwrap_or_default()
@@ -262,25 +290,21 @@ pub async fn add(
         anyhow::bail!("Provide either --file <path> or --url <url>");
     };
 
-    let final_tags = if tags_vec.is_empty() {
-        crate::mcp::infer_tags(&content)
-    } else {
-        tags_vec
-    };
-
     db.add_doc(&db::DocRecord {
         alias: alias.to_string(),
         source: db::SOURCE_INLINE.to_string(),
         page_id: None,
         path: None,
-        tags: final_tags.clone(),
+        tags: tags_vec.clone(),
         content: Some(content),
         namespace,
+        category: category.clone(),
     })?;
     println!(
-        "Saved '{}' with tags: {}",
+        "Saved '{}' (category: {}, tags: {})",
         alias,
-        if final_tags.is_empty() { "(none)".to_string() } else { final_tags.join(", ") }
+        category.as_deref().unwrap_or("(none)"),
+        if tags_vec.is_empty() { "(none)".to_string() } else { tags_vec.join(", ") }
     );
     Ok(())
 }

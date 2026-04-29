@@ -54,6 +54,8 @@ pub struct AddParams {
     /// Use to group docs by employer or life context so they can be filtered or
     /// bulk-removed later with `tome remove --namespace <ns>`. Omit for general knowledge.
     pub namespace: Option<String>,
+    /// Primary grouping category (e.g. "Terraform Modules")
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -161,6 +163,7 @@ impl TomeServer {
             tags: tags.clone(),
             content: Some(params.content),
             namespace: params.namespace.clone(),
+            category: params.category.clone(),
         };
 
         match self.db.add_doc(&record) {

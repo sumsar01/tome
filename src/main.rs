@@ -143,6 +143,29 @@ enum Command {
         /// Workplace or context label (e.g. "whiteaway", "personal")
         #[arg(long)]
         namespace: Option<String>,
+        /// Primary grouping category (e.g. "Terraform Modules")
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Delete a registered doc by alias (alias for remove)
+    Delete {
+        alias: String,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Rename a registered doc alias
+    Rename {
+        old_alias: String,
+        new_alias: String,
+    },
+    /// Assign a category to an existing doc
+    Categorize {
+        alias: String,
+        category: String,
+    },
+    /// Clear the category from an existing doc
+    Uncategorize {
+        alias: String,
     },
     /// Assign or clear the namespace on an existing doc
     SetNamespace {
@@ -244,10 +267,20 @@ async fn main() -> Result<()> {
         }
         Command::History { alias } => cmd::history(&db, &alias)?,
         Command::Diff { alias, v1, v2 } => cmd::diff(&db, &alias, v1, v2)?,
-        Command::Add { alias, file, url, tags, namespace } => {
-            cmd::add(&db, &alias, file, url, tags, namespace).await?;
+        Command::Add { alias, file, url, tags, namespace, category } => {
+            cmd::add(&db, &alias, file, url, tags, namespace, category).await?;
             backup::run(&cfg.backup, &db, "add");
         }
+        Command::Delete { alias, force } => {
+            cmd::remove(&db, Some(&alias), None, force)?;
+            backup::run(&cfg.backup, &db, "delete");
+        }
+        Command::Rename { old_alias, new_alias } => {
+            cmd::rename(&db, &old_alias, &new_alias)?;
+            backup::run(&cfg.backup, &db, "rename");
+        }
+        Command::Categorize { alias, category } => cmd::categorize(&db, &alias, &category)?,
+        Command::Uncategorize { alias } => cmd::uncategorize(&db, &alias)?,
         Command::SetNamespace { alias, namespace, clear } => {
             let ns = if clear { None } else { namespace.as_deref() };
             cmd::set_namespace(&db, &alias, ns)?;
