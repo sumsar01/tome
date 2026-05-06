@@ -66,14 +66,25 @@ pub fn draw(f: &mut Frame, app: &App) {
     ]));
     f.render_widget(logo, outer[0]);
 
-    // ── Content: left list + right preview ──────────────────────────────────
+    // ── Content: left list + right preview, centered as a unit ─────────────
+    // Center the combined list+preview at a max width matching the reader.
+    let centered = Layout::default()
+        .direction(Direction::Horizontal)
+        .flex(Flex::Center)
+        .constraints([
+            Constraint::Fill(1),     // left margin
+            Constraint::Max(180),    // list + preview container (60 list + 120 preview)
+            Constraint::Fill(1),     // right margin
+        ])
+        .split(outer[1]);
+
     let content = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(LIST_PANE_PCT),    // doc list
             Constraint::Percentage(PREVIEW_PANE_PCT), // preview
         ])
-        .split(outer[1]);
+        .split(centered[1]);
 
     draw_doc_list(f, app, content[0]);
     draw_preview(f, app, content[1]);
@@ -200,18 +211,6 @@ fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
 fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let theme = &app.theme;
-
-    // Cap preview at same reading width as the reader for consistent feel.
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .flex(Flex::Center)
-        .constraints([
-            Constraint::Fill(1),
-            Constraint::Max(120),
-            Constraint::Fill(1),
-        ])
-        .split(area);
-    let area = cols[1];
 
     let title = match &app.preview_alias {
         Some(alias) => format!(" {} ", alias),
