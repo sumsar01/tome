@@ -57,36 +57,36 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // ── Content horizontal split ──────────────────────────────────────────────
     let show_toc = app.toc_visible && !app.toc.is_empty();
 
-    let reading_col_area = if show_toc {
-        // ToC visible: sidebar on the left, reading fills all remaining space.
-        // No centering — the ToC already anchors the left edge.
-        let horizontal = Layout::default()
+    // Always compute the centered reading column the same way — ToC or not.
+    // The reading column is always Max(100) centered in the full content area.
+    // When the ToC is visible it is carved out of the left gutter so the
+    // reading column position never moves.
+    let centered = Layout::default()
+        .direction(Direction::Horizontal)
+        .flex(Flex::Center)
+        .constraints([
+            Constraint::Fill(1),    // left gutter (ToC lives here when visible)
+            Constraint::Max(100),   // reading column — always centered
+            Constraint::Fill(1),    // right gutter
+            Constraint::Length(1),  // scrollbar
+        ])
+        .split(content_area);
+
+    let reading_col_area = centered[1];
+    draw_scrollbar(f, app, centered[3]);
+
+    if show_toc {
+        // Place the ToC flush against the reading column inside the left gutter.
+        let toc_area = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Max(26),    // ToC sidebar
-                Constraint::Fill(1),    // reading column — fills everything to the right
-                Constraint::Length(1),  // scrollbar
+                Constraint::Fill(1),  // margin to the left of ToC
+                Constraint::Max(26),  // ToC sidebar, right-aligned in gutter
             ])
-            .split(content_area);
+            .split(centered[0]);
 
-        draw_toc(f, app, horizontal[0]);
-        draw_scrollbar(f, app, horizontal[2]);
-        horizontal[1]
-    } else {
-        let horizontal = Layout::default()
-            .direction(Direction::Horizontal)
-            .flex(Flex::Center)
-            .constraints([
-                Constraint::Fill(1),    // left gutter
-                Constraint::Max(100),   // reading column
-                Constraint::Fill(1),    // right gutter
-                Constraint::Length(1),  // scrollbar
-            ])
-            .split(content_area);
-
-        draw_scrollbar(f, app, horizontal[3]);
-        horizontal[1]
-    };
+        draw_toc(f, app, toc_area[1]);
+    }
 
     // ── Reading pane ──────────────────────────────────────────────────────────
     let rendered = markdown_to_text(&app.reader_content, &app.theme);
