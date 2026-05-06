@@ -73,7 +73,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .flex(Flex::Center)
         .constraints([
             Constraint::Fill(1),     // left margin
-            Constraint::Max(180),    // list + preview container (60 list + 120 preview)
+            Constraint::Max(185),    // list + preview container (60 list + 125 preview)
             Constraint::Fill(1),     // right margin
         ])
         .split(outer[1]);
