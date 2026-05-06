@@ -1,6 +1,6 @@
 [package]
 name = "tome"
-version = "0.1.17"
+version = "0.1.18"
 edition = "2021"
 description = "A docs reader for humans and AI — browse Confluence, GitHub, and local docs from your terminal"
 license = "MIT"
