@@ -59,6 +59,18 @@ pub struct AddParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UpdateParams {
+    /// The doc alias to update
+    pub alias: String,
+    /// New category to set. Pass empty string "" to clear the category. Omit to leave unchanged.
+    pub category: Option<String>,
+    /// New namespace to set. Pass empty string "" to clear the namespace. Omit to leave unchanged.
+    pub namespace: Option<String>,
+    /// Replace all tags with this list. Pass empty array [] to clear all tags. Omit to leave unchanged.
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct HistoryParams {
     /// The doc alias to show history for
     pub alias: String,
@@ -176,6 +188,65 @@ impl TomeServer {
         }
     }
 
+    /// Update metadata fields (category, namespace, tags) on an existing doc.
+    #[tool(description = "Update metadata fields on an existing doc. Pass category, namespace, or tags to change them. \
+        Pass an empty string for category/namespace to clear it. Pass an empty array for tags to clear all tags. \
+        Omit a field entirely to leave it unchanged. Errors if the alias does not exist.")]
+    async fn tome_update(&self, Parameters(params): Parameters<UpdateParams>) -> String {
+        if !self.db.alias_exists(&params.alias) {
+            return format!("Error: no doc with alias '{}' found.", params.alias);
+        }
+
+        let mut changed: Vec<String> = Vec::new();
+
+        if let Some(ref cat) = params.category {
+            let value = if cat.is_empty() { None } else { Some(cat.as_str()) };
+            match self.db.update_category(&params.alias, value) {
+                Ok(_) => {
+                    if cat.is_empty() {
+                        changed.push("category cleared".to_string());
+                    } else {
+                        changed.push(format!("category set to '{cat}'"));
+                    }
+                }
+                Err(e) => return format!("Error updating category: {e}"),
+            }
+        }
+
+        if let Some(ref ns) = params.namespace {
+            let value = if ns.is_empty() { None } else { Some(ns.as_str()) };
+            match self.db.update_namespace(&params.alias, value) {
+                Ok(_) => {
+                    if ns.is_empty() {
+                        changed.push("namespace cleared".to_string());
+                    } else {
+                        changed.push(format!("namespace set to '{ns}'"));
+                    }
+                }
+                Err(e) => return format!("Error updating namespace: {e}"),
+            }
+        }
+
+        if let Some(ref tags) = params.tags {
+            match self.db.update_tags(&params.alias, tags) {
+                Ok(_) => {
+                    if tags.is_empty() {
+                        changed.push("tags cleared".to_string());
+                    } else {
+                        changed.push(format!("tags set to: {}", tags.join(", ")));
+                    }
+                }
+                Err(e) => return format!("Error updating tags: {e}"),
+            }
+        }
+
+        if changed.is_empty() {
+            format!("'{}': nothing to update (no fields provided).", params.alias)
+        } else {
+            format!("Updated '{}': {}.", params.alias, changed.join("; "))
+        }
+    }
+
     /// List the fetch history for a doc alias.
     #[tool(description = "List the fetch history for a doc alias. Returns version index, timestamp, and content hash for each recorded fetch.")]
     async fn tome_history(&self, Parameters(params): Parameters<HistoryParams>) -> String {
@@ -233,6 +304,7 @@ impl ServerHandler for TomeServer {
                 "tome gives you access to internal documentation. \
                  Use tome_list to see available docs, tome_get to fetch a doc by alias, \
                  tome_search to find relevant docs, tome_add to save new docs, \
+                 tome_update to update category/namespace/tags on existing docs, \
                  tome_history to see fetch history, and tome_diff to compare versions.",
             )
     }

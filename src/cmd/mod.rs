@@ -110,6 +110,89 @@ pub fn set_namespace(db: &db::Db, alias: &str, namespace: Option<&str>) -> Resul
     Ok(())
 }
 
+/// `tome update` — update metadata fields on an existing doc.
+pub fn update(
+    db: &db::Db,
+    alias: &str,
+    category: Option<&str>,
+    clear_category: bool,
+    namespace: Option<&str>,
+    clear_namespace: bool,
+    tags: Option<&str>,
+    add_tag: Option<&str>,
+    remove_tag: Option<&str>,
+) -> Result<()> {
+    if !db.alias_exists(alias) {
+        anyhow::bail!("No doc with alias '{}' found.", alias);
+    }
+
+    let mut changed: Vec<String> = Vec::new();
+
+    // category
+    if clear_category {
+        db.update_category(alias, None)?;
+        changed.push("category cleared".to_string());
+    } else if let Some(cat) = category {
+        db.update_category(alias, Some(cat))?;
+        changed.push(format!("category set to '{cat}'"));
+    }
+
+    // namespace
+    if clear_namespace {
+        db.update_namespace(alias, None)?;
+        changed.push("namespace cleared".to_string());
+    } else if let Some(ns) = namespace {
+        db.update_namespace(alias, Some(ns))?;
+        changed.push(format!("namespace set to '{ns}'"));
+    }
+
+    // full tag replacement
+    if let Some(tags_str) = tags {
+        let new_tags: Vec<String> = tags_str
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        db.update_tags(alias, &new_tags)?;
+        if new_tags.is_empty() {
+            changed.push("tags cleared".to_string());
+        } else {
+            changed.push(format!("tags set to: {}", new_tags.join(", ")));
+        }
+    } else {
+        // incremental tag operations
+        if let Some(tag) = add_tag {
+            let doc = db.find_doc(alias)?.ok_or_else(|| anyhow::anyhow!("Doc not found"))?;
+            let mut new_tags = doc.tags.clone();
+            let tag = tag.trim().to_string();
+            if new_tags.contains(&tag) {
+                eprintln!("Tag '{}' already present on '{}'.", tag, alias);
+            } else {
+                new_tags.push(tag.clone());
+                db.update_tags(alias, &new_tags)?;
+                changed.push(format!("added tag '{tag}'"));
+            }
+        }
+        if let Some(tag) = remove_tag {
+            let doc = db.find_doc(alias)?.ok_or_else(|| anyhow::anyhow!("Doc not found"))?;
+            let original_len = doc.tags.len();
+            let new_tags: Vec<String> = doc.tags.into_iter().filter(|t| t != tag).collect();
+            if new_tags.len() == original_len {
+                anyhow::bail!("Tag '{}' not found on '{}'.", tag, alias);
+            }
+            db.update_tags(alias, &new_tags)?;
+            changed.push(format!("removed tag '{tag}'"));
+        }
+    }
+
+    if changed.is_empty() {
+        eprintln!("Nothing to update. Provide at least one field to change.");
+    } else {
+        println!("Updated '{}': {}.", alias, changed.join("; "));
+    }
+    Ok(())
+}
+
 /// `tome categorize` — assign a category to a doc.
 pub fn categorize(db: &db::Db, alias: &str, category: &str) -> Result<()> {
     if !db.alias_exists(alias) {

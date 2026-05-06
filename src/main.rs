@@ -158,6 +158,32 @@ enum Command {
         old_alias: String,
         new_alias: String,
     },
+    /// Update metadata fields (category, namespace, tags) on an existing doc
+    Update {
+        /// Doc alias to update
+        alias: String,
+        /// Set the category (e.g. "Terraform Modules")
+        #[arg(long)]
+        category: Option<String>,
+        /// Clear the category
+        #[arg(long, conflicts_with = "category")]
+        clear_category: bool,
+        /// Set the namespace (e.g. "whiteaway")
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Clear the namespace
+        #[arg(long, conflicts_with = "namespace")]
+        clear_namespace: bool,
+        /// Replace all tags with a comma-separated list (e.g. "rust,async")
+        #[arg(long, conflicts_with_all = ["add_tag", "remove_tag"])]
+        tags: Option<String>,
+        /// Add a single tag to the existing tag list
+        #[arg(long, conflicts_with = "tags")]
+        add_tag: Option<String>,
+        /// Remove a single tag from the existing tag list
+        #[arg(long, conflicts_with = "tags")]
+        remove_tag: Option<String>,
+    },
     /// Assign a category to an existing doc
     Categorize {
         alias: String,
@@ -284,6 +310,20 @@ async fn main() -> Result<()> {
         Command::SetNamespace { alias, namespace, clear } => {
             let ns = if clear { None } else { namespace.as_deref() };
             cmd::set_namespace(&db, &alias, ns)?;
+        }
+        Command::Update { alias, category, clear_category, namespace, clear_namespace, tags, add_tag, remove_tag } => {
+            cmd::update(
+                &db,
+                &alias,
+                category.as_deref(),
+                clear_category,
+                namespace.as_deref(),
+                clear_namespace,
+                tags.as_deref(),
+                add_tag.as_deref(),
+                remove_tag.as_deref(),
+            )?;
+            backup::run(&cfg.backup, &db, "update");
         }
     }
 
