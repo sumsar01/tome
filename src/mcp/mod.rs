@@ -303,8 +303,9 @@ impl ServerHandler for TomeServer {
             .with_instructions(
                 "tome gives you access to internal documentation. \
                  Use tome_list to see available docs, tome_get to fetch a doc by alias, \
-                 tome_search to find relevant docs, tome_add to save new docs, \
-                 tome_update to update category/namespace/tags on existing docs, \
+                 tome_search to find relevant docs, tome_add to save new docs (errors if alias exists), \
+                 tome_update to update category/namespace/tags on an existing doc (use this when tome_add \
+                 fails with alias-already-exists, or to fix metadata on a doc you already saved), \
                  tome_history to see fetch history, and tome_diff to compare versions.",
             )
     }
