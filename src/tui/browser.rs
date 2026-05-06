@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Flex, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -200,6 +200,18 @@ fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
 fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let theme = &app.theme;
+
+    // Cap preview at same reading width as the reader for consistent feel.
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .flex(Flex::Center)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(140),
+            Constraint::Fill(1),
+        ])
+        .split(area);
+    let area = cols[1];
 
     let title = match &app.preview_alias {
         Some(alias) => format!(" {} ", alias),
