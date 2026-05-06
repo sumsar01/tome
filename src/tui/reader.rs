@@ -66,7 +66,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .flex(Flex::Center)
         .constraints([
             Constraint::Fill(1),    // left gutter (ToC lives here when visible)
-            Constraint::Max(140),   // reading column — always centered
+            Constraint::Max(120),   // reading column — always centered
             Constraint::Fill(1),    // right gutter
             Constraint::Length(1),  // scrollbar
         ])

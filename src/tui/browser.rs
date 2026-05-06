@@ -207,7 +207,7 @@ fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         .flex(Flex::Center)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Max(140),
+            Constraint::Max(120),
             Constraint::Fill(1),
         ])
         .split(area);
