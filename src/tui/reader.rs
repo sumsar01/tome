@@ -55,25 +55,23 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 
     // ── Content horizontal split ──────────────────────────────────────────────
-    // Layout: [gutter] [ToC (optional, max 26)] [reading col (max 100)] [gutter] [scrollbar(1)]
     let show_toc = app.toc_visible && !app.toc.is_empty();
 
     let reading_col_area = if show_toc {
+        // ToC visible: sidebar on the left, reading fills all remaining space.
+        // No centering — the ToC already anchors the left edge.
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
-            .flex(Flex::Center)
             .constraints([
-                Constraint::Fill(1),    // left gutter
                 Constraint::Max(26),    // ToC sidebar
-                Constraint::Max(100),   // reading column
-                Constraint::Fill(1),    // right gutter
+                Constraint::Fill(1),    // reading column — fills everything to the right
                 Constraint::Length(1),  // scrollbar
             ])
             .split(content_area);
 
-        draw_toc(f, app, horizontal[1]);
-        draw_scrollbar(f, app, horizontal[4]);
-        horizontal[2]
+        draw_toc(f, app, horizontal[0]);
+        draw_scrollbar(f, app, horizontal[2]);
+        horizontal[1]
     } else {
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
