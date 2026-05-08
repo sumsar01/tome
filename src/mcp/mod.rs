@@ -152,7 +152,11 @@ impl TomeServer {
     /// Tags are inferred from headings if not provided.
     /// Returns an error if the alias already exists.
     #[tool(description = "Save a markdown document to tome so it can be retrieved later by alias. \
-        Use when the user shares a URL containing useful reference docs (API docs, guides, runbooks, specs). \
+        Use when the user shares a URL containing useful reference docs (API docs, guides, runbooks, specs), \
+        or when you generate reusable knowledge (summaries, how-tos, design decisions, gotchas). \
+        ALWAYS set category — it controls grouping in the TUI browser (e.g. 'Notes', 'How-To', 'API Docs', \
+        'Runbooks', 'Architecture', 'Terraform Modules'). \
+        Set namespace to the employer name (e.g. 'whiteaway') for work-specific docs; omit for general knowledge. \
         Tags are inferred from headings if omitted. Errors if alias already exists.")]
     async fn tome_add(&self, Parameters(params): Parameters<AddParams>) -> String {
         let alias = params.alias.trim().to_string();
