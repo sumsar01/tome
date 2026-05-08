@@ -1,4 +1,5 @@
 use anyhow::Result;
+use arboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -111,6 +112,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         ("Enter".to_string(), "Open"),
         ("i".to_string(), "Info"),
         ("Space".to_string(), "Collapse"),
+        (k.copy.clone(), "Copy alias"),
         (k.filter.clone(), "Filter"),
         (k.cycle_theme.clone(), "Theme"),
         ("q".to_string(), "Quit"),
@@ -253,6 +255,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let k_up     = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
     let k_filter = KeysConfig::parse_key(&keys.filter).unwrap_or(KeyCode::Char('/'));
     let k_theme  = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+    let k_copy   = KeysConfig::parse_key(&keys.copy).unwrap_or(KeyCode::Char('y'));
 
     if app.filtering {
         match key.code {
@@ -318,6 +321,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
     } else if code == k_theme {
         app.cycle_theme();
+    } else if code == k_copy {
+        if let Some(alias) = app.selected_alias() {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(alias.clone());
+                app.set_transient_status(format!("Copied '{alias}'"));
+            }
+        }
     }
 
     Ok(())
