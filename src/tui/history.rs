@@ -1,11 +1,11 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
+    Frame,
 };
 
 use super::app::App;
@@ -34,7 +34,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             ("q/Esc", "Back"),
         ]
     };
-    f.render_widget(Paragraph::new(app.status_or_help(theme, &bindings)), help_area);
+    f.render_widget(
+        Paragraph::new(app.status_or_help(theme, &bindings)),
+        help_area,
+    );
 
     if let Some(ref diff) = app.diff_content.clone() {
         // Show diff pane
@@ -43,11 +46,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .lines()
             .map(|line| {
                 let style = if line.starts_with('+') && !line.starts_with("+++") {
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
                 } else if line.starts_with('-') && !line.starts_with("---") {
                     Style::default().fg(ratatui::style::Color::Red)
                 } else if line.starts_with("@@") {
-                    Style::default().fg(theme.fg_dim).add_modifier(Modifier::ITALIC)
+                    Style::default()
+                        .fg(theme.fg_dim)
+                        .add_modifier(Modifier::ITALIC)
                 } else {
                     Style::default().fg(theme.fg)
                 };
@@ -74,10 +81,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .enumerate()
             .map(|(i, v)| {
                 let selected = i == app.history_selected;
-                let label = format!(
-                    " v{:<3} {}  [{}]",
-                    v.version, v.fetched_at, v.content_hash
-                );
+                let label = format!(" v{:<3} {}  [{}]", v.version, v.fetched_at, v.content_hash);
                 let style = if selected {
                     Style::default()
                         .fg(theme.accent)
@@ -109,7 +113,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use crate::config::KeysConfig;
     let keys = &app.cfg.ui.keys;
     let k_down = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
-    let k_up   = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
+    let k_up = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
 
     let code = key.code;
 

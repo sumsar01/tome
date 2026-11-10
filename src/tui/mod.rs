@@ -133,9 +133,7 @@ where
         if event::poll(std::time::Duration::from_millis(POLL_INTERVAL_MS))? {
             if let Event::Key(key) = event::read()? {
                 // Ctrl+C always quits, regardless of screen
-                if key.code == KeyCode::Char('c')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(());
                 }
 

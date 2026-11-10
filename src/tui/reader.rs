@@ -1,11 +1,11 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Flex, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
+    Frame,
 };
 
 use super::app::App;
@@ -29,12 +29,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // ── Help bar ─────────────────────────────────────────────────────────────
     let k = &app.cfg.ui.keys;
     let scroll_label = format!("{}/{}", k.scroll_down, k.scroll_up);
-    let toc_action = if app.toc_visible { "Hide ToC" } else { "Show ToC" };
+    let toc_action = if app.toc_visible {
+        "Hide ToC"
+    } else {
+        "Show ToC"
+    };
     // Build owned key strings so they live long enough for help_bar borrows
-    let mut owned_keys: Vec<(String, &str)> = vec![
-        (scroll_label, "Scroll"),
-        ("PgDn/PgUp".to_string(), "Page"),
-    ];
+    let mut owned_keys: Vec<(String, &str)> =
+        vec![(scroll_label, "Scroll"), ("PgDn/PgUp".to_string(), "Page")];
     if !app.toc.is_empty() {
         owned_keys.push((k.toggle_toc.clone(), toc_action));
     }
@@ -65,10 +67,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .direction(Direction::Horizontal)
         .flex(Flex::Center)
         .constraints([
-            Constraint::Fill(1),    // left gutter (ToC lives here when visible)
-            Constraint::Max(125),   // reading column — always centered
-            Constraint::Fill(1),    // right gutter
-            Constraint::Length(1),  // scrollbar
+            Constraint::Fill(1),   // left gutter (ToC lives here when visible)
+            Constraint::Max(125),  // reading column — always centered
+            Constraint::Fill(1),   // right gutter
+            Constraint::Length(1), // scrollbar
         ])
         .split(content_area);
 
@@ -80,8 +82,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let toc_area = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Fill(1),  // margin to the left of ToC
-                Constraint::Max(26),  // ToC sidebar, right-aligned in gutter
+                Constraint::Fill(1), // margin to the left of ToC
+                Constraint::Max(26), // ToC sidebar, right-aligned in gutter
             ])
             .split(centered[0]);
 
@@ -115,7 +117,12 @@ fn draw_info(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(vec![
         Span::styled("Alias:     ", Style::default().fg(theme.fg_dim)),
-        Span::styled(alias.clone(), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            alias.clone(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
 
     if let Ok(Some(doc)) = app.db.find_doc(alias) {
@@ -140,12 +147,19 @@ fn draw_info(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             Span::styled("Category:  ", Style::default().fg(theme.fg_dim)),
             Span::styled(cat_str, Style::default().fg(theme.fg)),
         ]));
-        let ns_str = doc.namespace.clone().unwrap_or_else(|| "(none)".to_string());
+        let ns_str = doc
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "(none)".to_string());
         lines.push(Line::from(vec![
             Span::styled("Namespace: ", Style::default().fg(theme.fg_dim)),
             Span::styled(ns_str, Style::default().fg(theme.fg)),
         ]));
-        let tag_str = if doc.tags.is_empty() { "(none)".to_string() } else { doc.tags.join(", ") };
+        let tag_str = if doc.tags.is_empty() {
+            "(none)".to_string()
+        } else {
+            doc.tags.join(", ")
+        };
         lines.push(Line::from(vec![
             Span::styled("Tags:      ", Style::default().fg(theme.fg_dim)),
             Span::styled(tag_str, Style::default().fg(theme.fg)),
@@ -170,13 +184,19 @@ fn draw_info(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             ]));
             lines.push(Line::from(vec![
                 Span::styled("History:   ", Style::default().fg(theme.fg_dim)),
-                Span::styled(format!("{} version(s)", versions.len()), Style::default().fg(theme.fg)),
+                Span::styled(
+                    format!("{} version(s)", versions.len()),
+                    Style::default().fg(theme.fg),
+                ),
             ]));
         }
     }
 
     lines.push(Line::default());
-    lines.push(Line::from(Span::styled("Press 'i' or Esc to close", theme.dim_style())));
+    lines.push(Line::from(Span::styled(
+        "Press 'i' or Esc to close",
+        theme.dim_style(),
+    )));
 
     let para = Paragraph::new(Text::from(lines))
         .block(
@@ -289,14 +309,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let keys = &app.cfg.ui.keys;
 
     // Resolve configured key codes (errors impossible here — validated at startup)
-    let k_down       = KeysConfig::parse_key(&keys.scroll_down).unwrap_or(KeyCode::Char('j'));
-    let k_up         = KeysConfig::parse_key(&keys.scroll_up).unwrap_or(KeyCode::Char('k'));
-    let k_toc        = KeysConfig::parse_key(&keys.toggle_toc).unwrap_or(KeyCode::Char('t'));
-    let k_copy       = KeysConfig::parse_key(&keys.copy).unwrap_or(KeyCode::Char('y'));
-    let k_history    = KeysConfig::parse_key(&keys.history).unwrap_or(KeyCode::Char('h'));
-    let k_open       = KeysConfig::parse_key(&keys.open_url).unwrap_or(KeyCode::Char('o'));
-    let k_info       = KeysConfig::parse_key(&keys.info).unwrap_or(KeyCode::Char('i'));
-    let k_theme      = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+    let k_down = KeysConfig::parse_key(&keys.scroll_down).unwrap_or(KeyCode::Char('j'));
+    let k_up = KeysConfig::parse_key(&keys.scroll_up).unwrap_or(KeyCode::Char('k'));
+    let k_toc = KeysConfig::parse_key(&keys.toggle_toc).unwrap_or(KeyCode::Char('t'));
+    let k_copy = KeysConfig::parse_key(&keys.copy).unwrap_or(KeyCode::Char('y'));
+    let k_history = KeysConfig::parse_key(&keys.history).unwrap_or(KeyCode::Char('h'));
+    let k_open = KeysConfig::parse_key(&keys.open_url).unwrap_or(KeyCode::Char('o'));
+    let k_info = KeysConfig::parse_key(&keys.info).unwrap_or(KeyCode::Char('i'));
+    let k_theme = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
 
     let code = key.code;
 

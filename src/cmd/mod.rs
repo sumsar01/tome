@@ -47,7 +47,12 @@ pub async fn search(cfg: &config::Config, db: &db::Db, query: &str) -> Result<()
 }
 
 /// `tome remove` — remove a registered doc (by alias) or all docs in a namespace.
-pub fn remove(db: &db::Db, alias: Option<&str>, namespace: Option<&str>, force: bool) -> Result<()> {
+pub fn remove(
+    db: &db::Db,
+    alias: Option<&str>,
+    namespace: Option<&str>,
+    force: bool,
+) -> Result<()> {
     if let Some(ns) = namespace {
         // Bulk delete by namespace
         let docs = db.list_docs(None, Some(ns))?;
@@ -56,10 +61,7 @@ pub fn remove(db: &db::Db, alias: Option<&str>, namespace: Option<&str>, force: 
             return Ok(());
         }
         if !force {
-            eprint!(
-                "Remove {} doc(s) with namespace '{ns}'? [y/N] ",
-                docs.len()
-            );
+            eprint!("Remove {} doc(s) with namespace '{ns}'? [y/N] ", docs.len());
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
             if !input.trim().eq_ignore_ascii_case("y") {
@@ -76,7 +78,8 @@ pub fn remove(db: &db::Db, alias: Option<&str>, namespace: Option<&str>, force: 
         return Ok(());
     }
 
-    let alias = alias.ok_or_else(|| anyhow::anyhow!("Provide either an alias or --namespace <ns>"))?;
+    let alias =
+        alias.ok_or_else(|| anyhow::anyhow!("Provide either an alias or --namespace <ns>"))?;
     if !db.alias_exists(alias) {
         anyhow::bail!("No doc with alias '{}' found.", alias);
     }
@@ -111,6 +114,7 @@ pub fn set_namespace(db: &db::Db, alias: &str, namespace: Option<&str>) -> Resul
 }
 
 /// `tome update` — update metadata fields on an existing doc.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     db: &db::Db,
     alias: &str,
@@ -162,7 +166,9 @@ pub fn update(
     } else {
         // incremental tag operations
         if let Some(tag) = add_tag {
-            let doc = db.find_doc(alias)?.ok_or_else(|| anyhow::anyhow!("Doc not found"))?;
+            let doc = db
+                .find_doc(alias)?
+                .ok_or_else(|| anyhow::anyhow!("Doc not found"))?;
             let mut new_tags = doc.tags.clone();
             let tag = tag.trim().to_string();
             if new_tags.contains(&tag) {
@@ -174,7 +180,9 @@ pub fn update(
             }
         }
         if let Some(tag) = remove_tag {
-            let doc = db.find_doc(alias)?.ok_or_else(|| anyhow::anyhow!("Doc not found"))?;
+            let doc = db
+                .find_doc(alias)?
+                .ok_or_else(|| anyhow::anyhow!("Doc not found"))?;
             let original_len = doc.tags.len();
             let new_tags: Vec<String> = doc.tags.into_iter().filter(|t| t != tag).collect();
             if new_tags.len() == original_len {
@@ -233,7 +241,8 @@ pub async fn refresh(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<(
 
 /// `tome open` — open the source URL for a doc in the default browser.
 pub fn open(cfg: &config::Config, db: &db::Db, alias: &str) -> Result<()> {
-    let doc = db.find_doc(alias)?
+    let doc = db
+        .find_doc(alias)?
         .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
     let url = crate::source_url(cfg, &doc)?;
     crate::open_in_browser(&url)?;
@@ -266,12 +275,19 @@ pub fn export(db: &db::Db, format: &str) -> Result<()> {
             for info in &docs {
                 if let Ok(Some(doc)) = db.find_doc(&info.alias) {
                     println!("# {}", doc.alias);
-                    println!("<!-- source: {} | tags: {} -->", doc.source, doc.tags.join(", "));
+                    println!(
+                        "<!-- source: {} | tags: {} -->",
+                        doc.source,
+                        doc.tags.join(", ")
+                    );
                     println!();
                     if let Some(content) = &doc.content {
                         println!("{}", content);
                     } else {
-                        println!("_(remote doc — run `tome get {}` to fetch content)_", doc.alias);
+                        println!(
+                            "_(remote doc — run `tome get {}` to fetch content)_",
+                            doc.alias
+                        );
                     }
                     println!("\n---\n");
                 }
@@ -286,7 +302,8 @@ pub fn export(db: &db::Db, format: &str) -> Result<()> {
 
 /// `tome tag` — add a tag to an existing doc.
 pub fn tag(db: &db::Db, alias: &str, tag: &str) -> Result<()> {
-    let doc = db.find_doc(alias)?
+    let doc = db
+        .find_doc(alias)?
         .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
     let mut tags = doc.tags.clone();
     let tag = tag.trim().to_string();
@@ -302,7 +319,8 @@ pub fn tag(db: &db::Db, alias: &str, tag: &str) -> Result<()> {
 
 /// `tome untag` — remove a tag from an existing doc.
 pub fn untag(db: &db::Db, alias: &str, tag: &str) -> Result<()> {
-    let doc = db.find_doc(alias)?
+    let doc = db
+        .find_doc(alias)?
         .ok_or_else(|| anyhow::anyhow!("No doc with alias '{}' found.", alias))?;
     let original_len = doc.tags.len();
     let tags: Vec<String> = doc.tags.into_iter().filter(|t| t != tag).collect();
@@ -323,7 +341,10 @@ pub fn history(db: &db::Db, alias: &str) -> Result<()> {
         println!("{:<4} {:<28} {:<10} ALIAS", "#", "FETCHED AT", "HASH");
         println!("{}", "-".repeat(TABLE_SEPARATOR_WIDTH));
         for v in &versions {
-            println!("{:<4} {:<28} {:<10} {}", v.version, v.fetched_at, v.content_hash, v.alias);
+            println!(
+                "{:<4} {:<28} {:<10} {}",
+                v.version, v.fetched_at, v.content_hash, v.alias
+            );
         }
     }
     Ok(())
@@ -333,17 +354,26 @@ pub fn history(db: &db::Db, alias: &str) -> Result<()> {
 pub fn diff(db: &db::Db, alias: &str, v1: usize, v2: usize) -> Result<()> {
     let versions = db.list_versions(alias)?;
     if versions.len() < 2 {
-        anyhow::bail!("Need at least 2 versions to diff. Run `tome refresh {alias}` to fetch a new version.");
+        anyhow::bail!(
+            "Need at least 2 versions to diff. Run `tome refresh {alias}` to fetch a new version."
+        );
     }
     // 0 means "use default": v1 = second-to-last, v2 = last
     let idx1 = if v1 == 0 { versions.len() - 2 } else { v1 - 1 };
     let idx2 = if v2 == 0 { versions.len() - 1 } else { v2 - 1 };
-    let a = versions.get(idx1).ok_or_else(|| anyhow::anyhow!("Version {} not found", idx1 + 1))?;
-    let b = versions.get(idx2).ok_or_else(|| anyhow::anyhow!("Version {} not found", idx2 + 1))?;
+    let a = versions
+        .get(idx1)
+        .ok_or_else(|| anyhow::anyhow!("Version {} not found", idx1 + 1))?;
+    let b = versions
+        .get(idx2)
+        .ok_or_else(|| anyhow::anyhow!("Version {} not found", idx2 + 1))?;
     println!("--- {} v{} ({})", alias, a.version, a.fetched_at);
     println!("+++ {} v{} ({})", alias, b.version, b.fetched_at);
     println!();
-    print!("{}", crate::util::diff::unified_diff(&a.content, &b.content));
+    print!(
+        "{}",
+        crate::util::diff::unified_diff(&a.content, &b.content)
+    );
     Ok(())
 }
 
@@ -387,7 +417,11 @@ pub async fn add(
         "Saved '{}' (category: {}, tags: {})",
         alias,
         category.as_deref().unwrap_or("(none)"),
-        if tags_vec.is_empty() { "(none)".to_string() } else { tags_vec.join(", ") }
+        if tags_vec.is_empty() {
+            "(none)".to_string()
+        } else {
+            tags_vec.join(", ")
+        }
     );
     Ok(())
 }
@@ -395,7 +429,10 @@ pub async fn add(
 /// Fetch a URL and return its content as markdown (best-effort).
 async fn fetch_url(url: &str) -> Result<String> {
     let client = crate::http::build_http_client()?;
-    let resp = client.get(url).send().await
+    let resp = client
+        .get(url)
+        .send()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to fetch '{url}': {e}"))?;
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} fetching '{url}'", resp.status());

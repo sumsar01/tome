@@ -24,7 +24,11 @@ impl ConfluenceSource {
     }
 
     fn api_url(&self, endpoint: &str) -> String {
-        format!("{}/wiki/api/v2/{}", self.base_url, endpoint.trim_start_matches('/'))
+        format!(
+            "{}/wiki/api/v2/{}",
+            self.base_url,
+            endpoint.trim_start_matches('/')
+        )
     }
 }
 
@@ -50,10 +54,7 @@ impl Source for ConfluenceSource {
         let (email, token) = auth::get_confluence_credentials()
             .context("Failed to retrieve Confluence credentials")?;
 
-        let url = self.api_url(&format!(
-            "pages/{}?body-format=storage",
-            page_id
-        ));
+        let url = self.api_url(&format!("pages/{}?body-format=storage", page_id));
 
         let response = self
             .client
@@ -66,9 +67,7 @@ impl Source for ConfluenceSource {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Confluence API error {status} for page {page_id}: {body}"
-            );
+            anyhow::bail!("Confluence API error {status} for page {page_id}: {body}");
         }
 
         let page: PageResponse = response
@@ -252,18 +251,57 @@ fn html_walk(html: &str) -> String {
                 let base = tag_name.trim_start_matches('/');
 
                 match base {
-                    "h1" => { if !is_closing { result.push_str("\n\n# "); } else { result.push('\n'); } }
-                    "h2" => { if !is_closing { result.push_str("\n\n## "); } else { result.push('\n'); } }
-                    "h3" => { if !is_closing { result.push_str("\n\n### "); } else { result.push('\n'); } }
-                    "h4" | "h5" | "h6" => { if !is_closing { result.push_str("\n\n#### "); } else { result.push('\n'); } }
-                    "p" => { if is_closing { result.push_str("\n\n"); } }
+                    "h1" => {
+                        if !is_closing {
+                            result.push_str("\n\n# ");
+                        } else {
+                            result.push('\n');
+                        }
+                    }
+                    "h2" => {
+                        if !is_closing {
+                            result.push_str("\n\n## ");
+                        } else {
+                            result.push('\n');
+                        }
+                    }
+                    "h3" => {
+                        if !is_closing {
+                            result.push_str("\n\n### ");
+                        } else {
+                            result.push('\n');
+                        }
+                    }
+                    "h4" | "h5" | "h6" => {
+                        if !is_closing {
+                            result.push_str("\n\n#### ");
+                        } else {
+                            result.push('\n');
+                        }
+                    }
+                    "p" => {
+                        if is_closing {
+                            result.push_str("\n\n");
+                        }
+                    }
                     "br" => result.push('\n'),
-                    "ul" | "ol" => { if is_closing { result.push('\n'); } }
-                    "li" => { if !is_closing { result.push_str("\n- "); } }
+                    "ul" | "ol" => {
+                        if is_closing {
+                            result.push('\n');
+                        }
+                    }
+                    "li" => {
+                        if !is_closing {
+                            result.push_str("\n- ");
+                        }
+                    }
                     "code" => result.push('`'),
                     "pre" => {
-                        if !is_closing { result.push_str("\n\n```\n"); }
-                        else { result.push_str("\n```\n\n"); }
+                        if !is_closing {
+                            result.push_str("\n\n```\n");
+                        } else {
+                            result.push_str("\n```\n\n");
+                        }
                     }
                     "strong" | "b" => result.push_str("**"),
                     "em" | "i" => result.push('*'),
@@ -271,7 +309,9 @@ fn html_walk(html: &str) -> String {
                 }
                 i = tag_end;
             }
-            '>' if in_tag => { in_tag = false; }
+            '>' if in_tag => {
+                in_tag = false;
+            }
             '&' if !in_tag => {
                 // Decode named HTML entities (including curly quotes from Confluence)
                 let rest: String = chars[i..].iter().take(9).collect();
@@ -293,19 +333,19 @@ fn html_walk(html: &str) -> String {
 fn decode_entity(s: &str) -> (char, usize) {
     // Named entities — extend as needed
     let entities: &[(&str, char)] = &[
-        ("&amp;",   '&'),
-        ("&lt;",    '<'),
-        ("&gt;",    '>'),
-        ("&nbsp;",  ' '),
-        ("&quot;",  '"'),
-        ("&apos;",  '\''),
+        ("&amp;", '&'),
+        ("&lt;", '<'),
+        ("&gt;", '>'),
+        ("&nbsp;", ' '),
+        ("&quot;", '"'),
+        ("&apos;", '\''),
         ("&ldquo;", '"'),
         ("&rdquo;", '"'),
         ("&lsquo;", '\''),
         ("&rsquo;", '\''),
         ("&ndash;", '–'),
         ("&mdash;", '—'),
-        ("&hellip;",'…'),
+        ("&hellip;", '…'),
     ];
     for &(entity, ch) in entities {
         if s.starts_with(entity) {
@@ -365,7 +405,7 @@ fn post_process(md: &str) -> String {
             }
         } else {
             blank_count = 0;
-            out.push_str(line);  // preserve leading whitespace (list indents, etc.)
+            out.push_str(line); // preserve leading whitespace (list indents, etc.)
             out.push('\n');
         }
     }

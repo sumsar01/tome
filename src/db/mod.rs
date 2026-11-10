@@ -255,9 +255,15 @@ impl Db {
     }
 
     /// List all docs, optionally filtered by tag and/or namespace.
-    pub fn list_docs(&self, tag_filter: Option<&str>, namespace_filter: Option<&str>) -> Result<Vec<DocInfo>> {
+    pub fn list_docs(
+        &self,
+        tag_filter: Option<&str>,
+        namespace_filter: Option<&str>,
+    ) -> Result<Vec<DocInfo>> {
         let conn = self.inner.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT alias, source, tags, namespace, category FROM docs ORDER BY alias ASC")?;
+        let mut stmt = conn.prepare(
+            "SELECT alias, source, tags, namespace, category FROM docs ORDER BY alias ASC",
+        )?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -328,20 +334,34 @@ impl Db {
     /// Rename a doc alias atomically (docs + doc_versions tables).
     pub fn rename_doc(&self, old_alias: &str, new_alias: &str) -> Result<()> {
         let conn = self.inner.lock().unwrap();
-        let old_exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM docs WHERE alias = ?1",
-            params![old_alias], |r| r.get(0)).unwrap_or(0);
+        let old_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM docs WHERE alias = ?1",
+                params![old_alias],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         if old_exists == 0 {
             anyhow::bail!("No doc with alias '{}' found.", old_alias);
         }
-        let new_exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM docs WHERE alias = ?1",
-            params![new_alias], |r| r.get(0)).unwrap_or(0);
+        let new_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM docs WHERE alias = ?1",
+                params![new_alias],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         if new_exists > 0 {
             anyhow::bail!("alias '{}' already exists in tome.", new_alias);
         }
-        conn.execute("UPDATE docs SET alias = ?1 WHERE alias = ?2", params![new_alias, old_alias])?;
-        conn.execute("UPDATE doc_versions SET alias = ?1 WHERE alias = ?2", params![new_alias, old_alias])?;
+        conn.execute(
+            "UPDATE docs SET alias = ?1 WHERE alias = ?2",
+            params![new_alias, old_alias],
+        )?;
+        conn.execute(
+            "UPDATE doc_versions SET alias = ?1 WHERE alias = ?2",
+            params![new_alias, old_alias],
+        )?;
         Ok(())
     }
 

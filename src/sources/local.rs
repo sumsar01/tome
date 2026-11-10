@@ -62,4 +62,3 @@ fn list_directory(dir: &std::path::Path) -> Result<String> {
 
     Ok(output)
 }
-

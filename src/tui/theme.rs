@@ -89,6 +89,7 @@ pub struct Theme {
     /// Dimmed — metadata, separators, help text.
     pub fg_dim: Color,
     /// Source badge colour (cyan-ish).
+    #[allow(dead_code)]
     pub source: Color,
     /// Filter bar / active input colour.
     pub filter: Color,
@@ -318,6 +319,7 @@ impl Theme {
         Style::default().fg(self.fg_dim)
     }
 
+    #[allow(dead_code)]
     pub fn source_style(&self) -> Style {
         Style::default().fg(self.source)
     }

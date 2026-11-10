@@ -1,13 +1,10 @@
 use anyhow::Result;
 use rmcp::{
-    ServerHandler, ServiceExt,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::{
-        ServerCapabilities, ServerInfo,
-        InitializeResult,
-    },
+    model::{InitializeResult, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
     transport::stdio,
+    ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -108,7 +105,10 @@ impl TomeServer {
 
     #[tool(description = "List all docs (alias, category, namespace, tags). Prefer tome_search.")]
     async fn tome_list(&self, Parameters(params): Parameters<ListParams>) -> String {
-        let docs = match self.db.list_docs(params.tag.as_deref(), params.namespace.as_deref()) {
+        let docs = match self
+            .db
+            .list_docs(params.tag.as_deref(), params.namespace.as_deref())
+        {
             Ok(d) => d,
             Err(e) => return format!("Error listing docs: {e}"),
         };
@@ -117,7 +117,10 @@ impl TomeServer {
             return "No docs found.".to_string();
         }
 
-        let mut out = format!("{} docs (alias | category | namespace | tags):\n", docs.len());
+        let mut out = format!(
+            "{} docs (alias | category | namespace | tags):\n",
+            docs.len()
+        );
         for doc in &docs {
             out.push_str(&format!(
                 "{} | {} | {} | {}\n",
@@ -130,7 +133,9 @@ impl TomeServer {
         out
     }
 
-    #[tool(description = "Get a doc's markdown by alias. Long docs are truncated with a hint listing sections and the offset to continue.")]
+    #[tool(
+        description = "Get a doc's markdown by alias. Long docs are truncated with a hint listing sections and the offset to continue."
+    )]
     async fn tome_get(&self, Parameters(params): Parameters<GetParams>) -> String {
         match sources::fetch(&self.cfg, &self.db, &params.alias, true).await {
             Ok(content) => format::get_view(
@@ -144,7 +149,9 @@ impl TomeServer {
         }
     }
 
-    #[tool(description = "Search docs by keyword (content, alias, tags). Returns ranked aliases with title, category and a short snippet; fetch with tome_get.")]
+    #[tool(
+        description = "Search docs by keyword (content, alias, tags). Returns ranked aliases with title, category and a short snippet; fetch with tome_get."
+    )]
     async fn tome_search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         match sources::search(&self.cfg, &self.db, &params.query).await {
             Ok(results) => format::search_results(&self.db, &params.query, &results, params.limit),
@@ -152,8 +159,10 @@ impl TomeServer {
         }
     }
 
-    #[tool(description = "Save markdown as a new doc. Use for useful reference docs from URLs or reusable knowledge you produce. \
-        Always set category; set namespace for work docs. Errors if alias exists (then use tome_update).")]
+    #[tool(
+        description = "Save markdown as a new doc. Use for useful reference docs from URLs or reusable knowledge you produce. \
+        Always set category; set namespace for work docs. Errors if alias exists (then use tome_update)."
+    )]
     async fn tome_add(&self, Parameters(params): Parameters<AddParams>) -> String {
         let alias = params.alias.trim().to_string();
 
@@ -182,7 +191,11 @@ impl TomeServer {
             Ok(()) => format!(
                 "Saved '{}' to tome with tags: {}",
                 alias,
-                if tags.is_empty() { "(none)".to_string() } else { tags.join(", ") }
+                if tags.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    tags.join(", ")
+                }
             ),
             Err(e) => format!("Error: {e}"),
         }
@@ -197,7 +210,11 @@ impl TomeServer {
         let mut changed: Vec<String> = Vec::new();
 
         if let Some(ref cat) = params.category {
-            let value = if cat.is_empty() { None } else { Some(cat.as_str()) };
+            let value = if cat.is_empty() {
+                None
+            } else {
+                Some(cat.as_str())
+            };
             match self.db.update_category(&params.alias, value) {
                 Ok(_) => {
                     if cat.is_empty() {
@@ -211,7 +228,11 @@ impl TomeServer {
         }
 
         if let Some(ref ns) = params.namespace {
-            let value = if ns.is_empty() { None } else { Some(ns.as_str()) };
+            let value = if ns.is_empty() {
+                None
+            } else {
+                Some(ns.as_str())
+            };
             match self.db.update_namespace(&params.alias, value) {
                 Ok(_) => {
                     if ns.is_empty() {
@@ -238,7 +259,10 @@ impl TomeServer {
         }
 
         if changed.is_empty() {
-            format!("'{}': nothing to update (no fields provided).", params.alias)
+            format!(
+                "'{}': nothing to update (no fields provided).",
+                params.alias
+            )
         } else {
             format!("Updated '{}': {}.", params.alias, changed.join("; "))
         }
@@ -248,7 +272,10 @@ impl TomeServer {
     async fn tome_history(&self, Parameters(params): Parameters<HistoryParams>) -> String {
         match self.db.list_versions(&params.alias) {
             Ok(versions) if versions.is_empty() => {
-                format!("No history for '{}'. Fetch it first with tome_get.", params.alias)
+                format!(
+                    "No history for '{}'. Fetch it first with tome_get.",
+                    params.alias
+                )
             }
             Ok(versions) => {
                 let mut out = format!("History for '{}':\n\n", params.alias);
@@ -264,7 +291,9 @@ impl TomeServer {
         }
     }
 
-    #[tool(description = "Unified diff between two versions from tome_history (default: last two).")]
+    #[tool(
+        description = "Unified diff between two versions from tome_history (default: last two)."
+    )]
     async fn tome_diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
         let versions = match self.db.list_versions(&params.alias) {
             Ok(v) => v,
@@ -277,8 +306,14 @@ impl TomeServer {
                 versions.len()
             );
         }
-        let idx1 = params.v1.map(|v| v.saturating_sub(1)).unwrap_or(versions.len() - 2);
-        let idx2 = params.v2.map(|v| v.saturating_sub(1)).unwrap_or(versions.len() - 1);
+        let idx1 = params
+            .v1
+            .map(|v| v.saturating_sub(1))
+            .unwrap_or(versions.len() - 2);
+        let idx2 = params
+            .v2
+            .map(|v| v.saturating_sub(1))
+            .unwrap_or(versions.len() - 1);
         let a = match versions.get(idx1) {
             Some(v) => v,
             None => return format!("Version {} not found", idx1 + 1),
@@ -311,16 +346,23 @@ pub async fn serve(cfg: Config, db: Db) -> Result<()> {
 }
 
 /// Build a unified diff string between two DocVersions (public for TUI use).
-pub fn unified_diff_string_pub(alias: &str, a: &crate::db::DocVersion, b: &crate::db::DocVersion) -> String {
+pub fn unified_diff_string_pub(
+    alias: &str,
+    a: &crate::db::DocVersion,
+    b: &crate::db::DocVersion,
+) -> String {
     unified_diff_string(alias, a, b)
 }
 
 /// Build a unified diff string between two DocVersions.
-fn unified_diff_string(alias: &str, a: &crate::db::DocVersion, b: &crate::db::DocVersion) -> String {
+fn unified_diff_string(
+    alias: &str,
+    a: &crate::db::DocVersion,
+    b: &crate::db::DocVersion,
+) -> String {
     let header = format!(
         "--- {} v{} ({})\n+++ {} v{} ({})\n\n",
-        alias, a.version, a.fetched_at,
-        alias, b.version, b.fetched_at
+        alias, a.version, a.fetched_at, alias, b.version, b.fetched_at
     );
     header + &crate::util::diff::unified_diff(&a.content, &b.content)
 }
@@ -355,7 +397,7 @@ fn slugify(s: &str) -> String {
         .collect::<String>()
         .split_whitespace()
         .map(|w| w.to_lowercase())
-        .filter(|w| !w.is_empty() && w.len() > 1)  // drop single-char words
+        .filter(|w| !w.is_empty() && w.len() > 1) // drop single-char words
         .collect::<Vec<_>>()
         .join("-")
 }

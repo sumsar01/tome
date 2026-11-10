@@ -2,11 +2,11 @@ use anyhow::Result;
 use arboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Flex, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    Frame,
 };
 
 use super::app::{App, ListRow};
@@ -73,9 +73,9 @@ pub fn draw(f: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .flex(Flex::Center)
         .constraints([
-            Constraint::Fill(1),     // left margin
-            Constraint::Max(185),    // list + preview container (60 list + 125 preview)
-            Constraint::Fill(1),     // right margin
+            Constraint::Fill(1),  // left margin
+            Constraint::Max(185), // list + preview container (60 list + 125 preview)
+            Constraint::Fill(1),  // right margin
         ])
         .split(outer[1]);
 
@@ -122,11 +122,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let help_line = if !app.status.is_empty() {
         app.status_or_help(theme, &refs)
     } else if app.filtering {
-        theme.help_bar(&[
-            ("Type", "Filter"),
-            ("Enter", "Confirm"),
-            ("Esc", "Cancel"),
-        ])
+        theme.help_bar(&[("Type", "Filter"), ("Enter", "Confirm"), ("Esc", "Cancel")])
     } else {
         theme.help_bar(&refs)
     };
@@ -145,14 +141,12 @@ fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             ListRow::Header(cat) => {
                 let collapsed = app.collapsed_categories.contains(cat);
                 let arrow = if collapsed { "▶" } else { "▼" };
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{} {}", arrow, cat),
-                        Style::default()
-                            .fg(theme.accent)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]))
+                ListItem::new(Line::from(vec![Span::styled(
+                    format!("{} {}", arrow, cat),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                )]))
             }
             ListRow::Doc(alias) => {
                 let doc = app.db.find_doc(alias).ok().flatten();
@@ -170,7 +164,9 @@ fn draw_doc_list(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                     spans.push(Span::raw("  "));
                     spans.push(Span::styled(
                         format!("[{}]", ns),
-                        Style::default().fg(theme.accent).add_modifier(Modifier::DIM),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::DIM),
                     ));
                 }
                 if !tags.is_empty() {
@@ -238,8 +234,8 @@ fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             } else {
                 "  Select a doc to preview"
             };
-            let widget = Paragraph::new(Line::from(Span::styled(msg, theme.dim_style())))
-                .block(block);
+            let widget =
+                Paragraph::new(Line::from(Span::styled(msg, theme.dim_style()))).block(block);
             f.render_widget(widget, area);
         }
     }
@@ -251,11 +247,11 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use crate::config::KeysConfig;
     let keys = &app.cfg.ui.keys;
 
-    let k_down   = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
-    let k_up     = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
+    let k_down = KeysConfig::parse_key(&keys.navigate_down).unwrap_or(KeyCode::Char('j'));
+    let k_up = KeysConfig::parse_key(&keys.navigate_up).unwrap_or(KeyCode::Char('k'));
     let k_filter = KeysConfig::parse_key(&keys.filter).unwrap_or(KeyCode::Char('/'));
-    let k_theme  = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
-    let k_copy   = KeysConfig::parse_key(&keys.copy).unwrap_or(KeyCode::Char('y'));
+    let k_theme = KeysConfig::parse_key(&keys.cycle_theme).unwrap_or(KeyCode::Char('T'));
+    let k_copy = KeysConfig::parse_key(&keys.copy).unwrap_or(KeyCode::Char('y'));
 
     if app.filtering {
         match key.code {
