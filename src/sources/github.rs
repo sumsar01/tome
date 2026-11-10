@@ -17,9 +17,9 @@ pub struct GitHubSource {
 
 impl GitHubSource {
     pub fn new(repo: &str, git_ref: &str) -> Result<Self> {
-        let (owner, repo_name) = repo
-            .split_once('/')
-            .ok_or_else(|| anyhow::anyhow!("GitHub repo must be in 'owner/repo' format, got '{repo}'"))?;
+        let (owner, repo_name) = repo.split_once('/').ok_or_else(|| {
+            anyhow::anyhow!("GitHub repo must be in 'owner/repo' format, got '{repo}'")
+        })?;
 
         let client = http::build_http_client()?;
 
@@ -50,8 +50,7 @@ struct GitHubDirEntry {
 #[async_trait]
 impl Source for GitHubSource {
     async fn fetch_content(&self, path: &str) -> Result<String> {
-        let token = auth::get_github_token()
-            .context("Failed to retrieve GitHub token")?;
+        let token = auth::get_github_token().context("Failed to retrieve GitHub token")?;
 
         let url = format!(
             "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
@@ -74,7 +73,10 @@ impl Source for GitHubSource {
         }
 
         // GitHub returns either a file object or an array (directory)
-        let text = response.text().await.context("Failed to read GitHub response")?;
+        let text = response
+            .text()
+            .await
+            .context("Failed to read GitHub response")?;
 
         if text.trim_start().starts_with('[') {
             // Directory listing
@@ -111,9 +113,7 @@ fn format_directory_listing(
     path: &str,
     entries: &[GitHubDirEntry],
 ) -> Result<String> {
-    let mut out = format!(
-        "# {owner}/{repo}/{path}\n\nDirectory contents:\n\n"
-    );
+    let mut out = format!("# {owner}/{repo}/{path}\n\nDirectory contents:\n\n");
     for entry in entries {
         let icon = if entry.kind == "dir" { "📁" } else { "📄" };
         out.push_str(&format!("- {icon} `{}`\n", entry.name));

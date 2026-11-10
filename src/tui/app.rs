@@ -2,10 +2,10 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use super::theme::{Theme, ThemeName};
 use crate::config::Config;
 use crate::db::Db;
 use crate::sources;
-use super::theme::{Theme, ThemeName};
 
 /// How long transient status messages (theme change, clipboard copy) remain visible.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
@@ -153,7 +153,7 @@ impl App {
         let docs = self.db.list_docs(None, None).unwrap_or_default();
 
         // Collect unique categories in sorted order; "Uncategorized" last
-        let mut categories: Vec<String> = {
+        let categories: Vec<String> = {
             let mut seen = std::collections::BTreeSet::new();
             for d in &docs {
                 if let Some(ref cat) = d.category {
@@ -170,7 +170,10 @@ impl App {
         for cat in &categories {
             rows.push(ListRow::Header(cat.clone()));
             if !self.collapsed_categories.contains(cat) {
-                for d in docs.iter().filter(|d| d.category.as_deref() == Some(cat.as_str())) {
+                for d in docs
+                    .iter()
+                    .filter(|d| d.category.as_deref() == Some(cat.as_str()))
+                {
                     rows.push(ListRow::Doc(d.alias.clone()));
                 }
             }
@@ -323,7 +326,11 @@ impl App {
         let idx1 = if idx2 == 0 { 1 } else { idx2 - 1 };
         let a = &self.history_entries[idx1];
         let b = &self.history_entries[idx2];
-        self.diff_content = Some(crate::mcp::unified_diff_string_pub(&self.reader_title, a, b));
+        self.diff_content = Some(crate::mcp::unified_diff_string_pub(
+            &self.reader_title,
+            a,
+            b,
+        ));
     }
 
     /// Return the filesystem path for the currently displayed doc if it is local,
@@ -345,9 +352,22 @@ impl App {
             return doc.path;
         }
         // For local source with path configured via SourceConfig.root + doc.path
-        if self.cfg.find_source(&doc.source).map(|s| s.kind == crate::config::SourceKind::Local).unwrap_or(false) {
-            if let Some(root) = self.cfg.find_source(&doc.source).and_then(|s| s.root.as_deref()) {
-                return Some(format!("{}/{}", root.trim_end_matches('/'), doc.path.unwrap_or_default()));
+        if self
+            .cfg
+            .find_source(&doc.source)
+            .map(|s| s.kind == crate::config::SourceKind::Local)
+            .unwrap_or(false)
+        {
+            if let Some(root) = self
+                .cfg
+                .find_source(&doc.source)
+                .and_then(|s| s.root.as_deref())
+            {
+                return Some(format!(
+                    "{}/{}",
+                    root.trim_end_matches('/'),
+                    doc.path.unwrap_or_default()
+                ));
             }
         }
         None
@@ -376,18 +396,16 @@ impl App {
     pub fn open_source_in_browser(&mut self) {
         let alias = &self.reader_title;
         match self.db.find_doc(alias) {
-            Ok(Some(doc)) => {
-                match crate::source_url(&self.cfg, &doc) {
-                    Ok(url) => {
-                        if let Err(e) = crate::open_in_browser(&url) {
-                            self.set_transient_status(format!("{e}"));
-                        } else {
-                            self.set_transient_status(format!("Opened {}", url));
-                        }
+            Ok(Some(doc)) => match crate::source_url(&self.cfg, &doc) {
+                Ok(url) => {
+                    if let Err(e) = crate::open_in_browser(&url) {
+                        self.set_transient_status(format!("{e}"));
+                    } else {
+                        self.set_transient_status(format!("Opened {}", url));
                     }
-                    Err(e) => self.set_transient_status(format!("{e}")),
                 }
-            }
+                Err(e) => self.set_transient_status(format!("{e}")),
+            },
             _ => self.set_transient_status("Doc not found.".to_string()),
         }
     }
@@ -420,7 +438,11 @@ impl App {
     ///
     /// This consolidates the identical `if !app.status.is_empty() { … } else { … }`
     /// pattern shared by browser, reader, and history draw functions.
-    pub fn status_or_help<'a>(&self, theme: &'a super::theme::Theme, bindings: &[(&'a str, &'a str)]) -> ratatui::text::Line<'a> {
+    pub fn status_or_help<'a>(
+        &self,
+        theme: &'a super::theme::Theme,
+        bindings: &[(&'a str, &'a str)],
+    ) -> ratatui::text::Line<'a> {
         if !self.status.is_empty() {
             ratatui::text::Line::from(vec![
                 ratatui::text::Span::raw("  "),

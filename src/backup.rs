@@ -88,9 +88,7 @@ fn git_commit(file: &Path, trigger: &str, push: bool) -> Result<()> {
     };
 
     // Use the absolute path for `git add` so it works regardless of cwd.
-    let abs = file
-        .canonicalize()
-        .unwrap_or_else(|_| file.to_path_buf());
+    let abs = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let abs_str = abs.to_string_lossy();
 
     run(&["add", &abs_str])?;
@@ -218,9 +216,12 @@ fn is_github_repo_private(owner: &str, repo: &str) -> Result<bool> {
     let output = std::process::Command::new("curl")
         .args([
             "--silent",
-            "--max-time", "10",
-            "--user-agent", "tome-backup/1",
-            "--header", "Accept: application/vnd.github+json",
+            "--max-time",
+            "10",
+            "--user-agent",
+            "tome-backup/1",
+            "--header",
+            "Accept: application/vnd.github+json",
             &url,
         ])
         .output()
@@ -231,8 +232,8 @@ fn is_github_repo_private(owner: &str, repo: &str) -> Result<bool> {
     }
 
     let body = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&body)
-        .context("GitHub API returned invalid JSON")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).context("GitHub API returned invalid JSON")?;
 
     // If the repo doesn't exist or is truly private, the API returns either
     // 404 (with a "message" field) or the full object with "private": true.

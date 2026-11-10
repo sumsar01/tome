@@ -185,14 +185,9 @@ enum Command {
         remove_tag: Option<String>,
     },
     /// Assign a category to an existing doc
-    Categorize {
-        alias: String,
-        category: String,
-    },
+    Categorize { alias: String, category: String },
     /// Clear the category from an existing doc
-    Uncategorize {
-        alias: String,
-    },
+    Uncategorize { alias: String },
     /// Assign or clear the namespace on an existing doc
     SetNamespace {
         /// Doc alias
@@ -269,11 +264,18 @@ async fn main() -> Result<()> {
             AuthProvider::Github => config::auth::store_github_token()?,
         },
         Command::Cache { action } => match action {
-            CacheAction::Clear => { cache::clear()?; println!("Cache cleared."); }
+            CacheAction::Clear => {
+                cache::clear()?;
+                println!("Cache cleared.");
+            }
             CacheAction::Status => cache::status()?,
         },
         Command::Mcp => mcp::serve(cfg, db).await?,
-        Command::Remove { alias, namespace, force } => {
+        Command::Remove {
+            alias,
+            namespace,
+            force,
+        } => {
             cmd::remove(&db, alias.as_deref(), namespace.as_deref(), force)?;
             backup::run(&cfg.backup, &db, "remove");
         }
@@ -293,7 +295,14 @@ async fn main() -> Result<()> {
         }
         Command::History { alias } => cmd::history(&db, &alias)?,
         Command::Diff { alias, v1, v2 } => cmd::diff(&db, &alias, v1, v2)?,
-        Command::Add { alias, file, url, tags, namespace, category } => {
+        Command::Add {
+            alias,
+            file,
+            url,
+            tags,
+            namespace,
+            category,
+        } => {
             cmd::add(&db, &alias, file, url, tags, namespace, category).await?;
             backup::run(&cfg.backup, &db, "add");
         }
@@ -301,17 +310,33 @@ async fn main() -> Result<()> {
             cmd::remove(&db, Some(&alias), None, force)?;
             backup::run(&cfg.backup, &db, "delete");
         }
-        Command::Rename { old_alias, new_alias } => {
+        Command::Rename {
+            old_alias,
+            new_alias,
+        } => {
             cmd::rename(&db, &old_alias, &new_alias)?;
             backup::run(&cfg.backup, &db, "rename");
         }
         Command::Categorize { alias, category } => cmd::categorize(&db, &alias, &category)?,
         Command::Uncategorize { alias } => cmd::uncategorize(&db, &alias)?,
-        Command::SetNamespace { alias, namespace, clear } => {
+        Command::SetNamespace {
+            alias,
+            namespace,
+            clear,
+        } => {
             let ns = if clear { None } else { namespace.as_deref() };
             cmd::set_namespace(&db, &alias, ns)?;
         }
-        Command::Update { alias, category, clear_category, namespace, clear_namespace, tags, add_tag, remove_tag } => {
+        Command::Update {
+            alias,
+            category,
+            clear_category,
+            namespace,
+            clear_namespace,
+            tags,
+            add_tag,
+            remove_tag,
+        } => {
             cmd::update(
                 &db,
                 &alias,
@@ -340,14 +365,18 @@ pub(crate) fn source_url(cfg: &config::Config, doc: &db::DocRecord) -> anyhow::R
             anyhow::bail!("'{}' is a local file — it has no URL.", doc.alias);
         }
         source_name => {
-            let scfg = cfg.find_source(source_name)
+            let scfg = cfg
+                .find_source(source_name)
                 .ok_or_else(|| anyhow::anyhow!("Source '{}' not found in config", source_name))?;
             match scfg.kind {
                 config::SourceKind::Github => {
                     let repo = scfg.repo.as_deref().unwrap_or("");
                     let git_ref = scfg.git_ref.as_deref().unwrap_or("main");
                     let path = doc.path.as_deref().unwrap_or("");
-                    Ok(format!("https://github.com/{}/blob/{}/{}", repo, git_ref, path))
+                    Ok(format!(
+                        "https://github.com/{}/blob/{}/{}",
+                        repo, git_ref, path
+                    ))
                 }
                 config::SourceKind::Confluence => {
                     let base = scfg.base_url.as_deref().unwrap_or("").trim_end_matches('/');
@@ -373,13 +402,19 @@ pub(crate) fn source_url(cfg: &config::Config, doc: &db::DocRecord) -> anyhow::R
 /// Open a URL in the system's default browser.
 pub(crate) fn open_in_browser(url: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
-    std::process::Command::new("open").arg(url).spawn()
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to open browser: {e}"))?;
     #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open").arg(url).spawn()
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to open browser: {e}"))?;
     #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd").args(["/c", "start", url]).spawn()
+    std::process::Command::new("cmd")
+        .args(["/c", "start", url])
+        .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to open browser: {e}"))?;
     Ok(())
 }

@@ -6,7 +6,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
-use crate::{cache, config::Config, db::{Db, SOURCE_INLINE}};
+use crate::{
+    cache,
+    config::Config,
+    db::{Db, SOURCE_INLINE},
+};
 
 /// Result of a search across sources
 pub struct SearchResult {
@@ -23,9 +27,9 @@ pub trait Source: Send + Sync {
 
 /// Fetch a doc by alias, using cache if enabled and fresh.
 pub async fn fetch(cfg: &Config, db: &Db, alias: &str, use_cache: bool) -> Result<String> {
-    let doc = db
-        .find_doc(alias)?
-        .ok_or_else(|| anyhow::anyhow!("Unknown alias '{alias}'. Run `tome list` to see available docs."))?;
+    let doc = db.find_doc(alias)?.ok_or_else(|| {
+        anyhow::anyhow!("Unknown alias '{alias}'. Run `tome list` to see available docs.")
+    })?;
 
     // Inline docs: content stored directly in DB
     if doc.source == SOURCE_INLINE {
@@ -97,21 +101,25 @@ async fn fetch_live(cfg: &Config, doc: &crate::db::DocRecord) -> Result<String> 
             src.fetch_content(path).await
         }
         crate::config::SourceKind::Confluence => {
-            let base_url = source_cfg
-                .base_url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("Confluence source '{source_name}' missing 'base_url'"))?;
+            let base_url = source_cfg.base_url.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("Confluence source '{source_name}' missing 'base_url'")
+            })?;
             let src = confluence::ConfluenceSource::new(base_url)?;
             let path = doc
                 .page_id
                 .as_deref()
                 .or(doc.path.as_deref())
-                .ok_or_else(|| anyhow::anyhow!("Confluence doc '{}' needs 'page_id' or 'path'", doc.alias))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Confluence doc '{}' needs 'page_id' or 'path'", doc.alias)
+                })?;
             src.fetch_content(path).await
         }
         // Inline is handled above; this arm should be unreachable
         crate::config::SourceKind::Inline => {
-            anyhow::bail!("Inline doc '{}' should not reach source dispatch", doc.alias)
+            anyhow::bail!(
+                "Inline doc '{}' should not reach source dispatch",
+                doc.alias
+            )
         }
     }
 }
@@ -154,6 +162,6 @@ pub async fn search(cfg: &Config, db: &Db, query: &str) -> Result<Vec<SearchResu
         }
     }
 
-    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.sort_by_key(|r| std::cmp::Reverse(r.score));
     Ok(results)
 }
