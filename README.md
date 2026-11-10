@@ -101,8 +101,8 @@ Exposed tools:
 | Tool | Description |
 |---|---|
 | `tome_list` | List all registered doc aliases (optional tag filter) |
-| `tome_get` | Fetch full content of a doc by alias |
-| `tome_search` | Fuzzy search across aliases and tags |
+| `tome_get` | Fetch a doc by alias. Optional `section` (heading), `max_chars` (default 16000, 0 = full) and `offset` for long docs |
+| `tome_search` | Ranked search over content, aliases and tags: alias, title, category, short snippet, score (optional `limit`, default 8) |
 
 Then tell your AI: *"use tome to get the kubernetes docs"* and it fetches them directly.
 

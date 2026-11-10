@@ -16,6 +16,8 @@ use crate::config::Config;
 use crate::db::{Db, DocRecord, SOURCE_INLINE};
 use crate::sources;
 
+mod format;
+
 pub struct TomeServer {
     cfg: Arc<Config>,
     db: Arc<Db>,
@@ -24,65 +26,66 @@ pub struct TomeServer {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListParams {
-    /// Optional tag to filter docs by (e.g. "migration", "infra")
+    /// Filter by tag
     pub tag: Option<String>,
-    /// Optional namespace to filter docs by (e.g. "whiteaway", "personal")
+    /// Filter by namespace
     pub namespace: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetParams {
-    /// The doc alias to fetch, e.g. "kubernetes" or "migration-guide"
     pub alias: String,
+    /// Return only this heading's section (case-insensitive; exact title, else substring)
+    pub section: Option<String>,
+    /// Max chars to return (default 16000, 0 = no limit)
+    pub max_chars: Option<usize>,
+    /// Char offset to continue from (see truncation hint)
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SearchParams {
-    /// Search query, e.g. "migration kubernetes"
     pub query: String,
+    /// Max results (default 8)
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AddParams {
-    /// Short unique alias for the doc, e.g. "fastify-plugins" (kebab-case, no spaces)
+    /// Unique kebab-case alias
     pub alias: String,
-    /// Full markdown content of the document
+    /// Markdown content
     pub content: String,
-    /// Tags for filtering and search. If omitted, tags are inferred from headings.
+    /// Omit to infer from headings
     pub tags: Option<Vec<String>>,
-    /// Workplace or context label for this doc (e.g. "whiteaway", "personal").
-    /// Use to group docs by employer or life context so they can be filtered or
-    /// bulk-removed later with `tome remove --namespace <ns>`. Omit for general knowledge.
+    /// Employer name for work docs (e.g. "whiteaway"); omit for general knowledge
     pub namespace: Option<String>,
-    /// Primary grouping category (e.g. "Terraform Modules")
+    /// Always set, e.g. "Notes", "How-To", "API Docs", "Runbooks", "Architecture"
     pub category: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateParams {
-    /// The doc alias to update
     pub alias: String,
-    /// New category to set. Pass empty string "" to clear the category. Omit to leave unchanged.
+    /// "" clears; omit to keep
     pub category: Option<String>,
-    /// New namespace to set. Pass empty string "" to clear the namespace. Omit to leave unchanged.
+    /// "" clears; omit to keep
     pub namespace: Option<String>,
-    /// Replace all tags with this list. Pass empty array [] to clear all tags. Omit to leave unchanged.
+    /// Replaces all tags; [] clears; omit to keep
     pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct HistoryParams {
-    /// The doc alias to show history for
     pub alias: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DiffParams {
-    /// The doc alias to diff
     pub alias: String,
-    /// First version index (1-based, default: second-to-last)
+    /// 1-based version (default: second-to-last)
     pub v1: Option<usize>,
-    /// Second version index (1-based, default: last)
+    /// 1-based version (default: last)
     pub v2: Option<usize>,
 }
 
@@ -90,15 +93,20 @@ pub struct DiffParams {
 impl TomeServer {
     #[allow(clippy::new_without_default)]
     pub fn new(cfg: Config, db: Db) -> Self {
+        let mut tool_router = Self::tool_router();
+        for route in tool_router.map.values_mut() {
+            let mut schema = (*route.attr.input_schema).clone();
+            schema.remove("$schema");
+            route.attr.input_schema = Arc::new(schema);
+        }
         Self {
             cfg: Arc::new(cfg),
             db: Arc::new(db),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
-    /// List all available documentation aliases registered in tome.
-    #[tool(description = "List all available documentation aliases registered in tome. Returns alias, source, namespace, and tags for each doc. Filter by tag or namespace.")]
+    #[tool(description = "List all docs (alias, category, namespace, tags). Prefer tome_search.")]
     async fn tome_list(&self, Parameters(params): Parameters<ListParams>) -> String {
         let docs = match self.db.list_docs(params.tag.as_deref(), params.namespace.as_deref()) {
             Ok(d) => d,
@@ -109,55 +117,43 @@ impl TomeServer {
             return "No docs found.".to_string();
         }
 
-        let mut out = String::from("Available docs:\n\n");
+        let mut out = format!("{} docs (alias | category | namespace | tags):\n", docs.len());
         for doc in &docs {
             out.push_str(&format!(
-                "- **{}** (source: {}, namespace: {}) tags: {}\n",
+                "{} | {} | {} | {}\n",
                 doc.alias,
-                doc.source,
+                doc.category.as_deref().unwrap_or("-"),
                 doc.namespace.as_deref().unwrap_or("-"),
-                doc.tags.join(", ")
+                doc.tags.join(",")
             ));
         }
         out
     }
 
-    /// Fetch the full content of a documentation page by its alias.
-    #[tool(description = "Fetch the full content of a documentation page by its alias. Returns markdown content.")]
+    #[tool(description = "Get a doc's markdown by alias. Long docs are truncated with a hint listing sections and the offset to continue.")]
     async fn tome_get(&self, Parameters(params): Parameters<GetParams>) -> String {
         match sources::fetch(&self.cfg, &self.db, &params.alias, true).await {
-            Ok(content) => content,
+            Ok(content) => format::get_view(
+                &params.alias,
+                &content,
+                params.section.as_deref(),
+                params.max_chars,
+                params.offset,
+            ),
             Err(e) => format!("Error fetching '{}': {e}", params.alias),
         }
     }
 
-    /// Search for documentation by keyword across aliases and tags.
-    #[tool(description = "Search for documentation by keyword. Searches across doc aliases and tags, returns ranked results.")]
+    #[tool(description = "Search docs by keyword (content, alias, tags). Returns ranked aliases with title, category and a short snippet; fetch with tome_get.")]
     async fn tome_search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         match sources::search(&self.cfg, &self.db, &params.query).await {
-            Ok(results) if results.is_empty() => format!("No results for '{}'", params.query),
-            Ok(results) => {
-                let mut out = format!("Search results for '{}':\n\n", params.query);
-                for r in results {
-                    out.push_str(&format!("- **{}** — {}\n", r.alias, r.snippet));
-                }
-                out
-            }
+            Ok(results) => format::search_results(&self.db, &params.query, &results, params.limit),
             Err(e) => format!("Search error: {e}"),
         }
     }
 
-    /// Save a markdown document to tome with an alias and tags.
-    /// Use this when the user shares a URL with useful reference documentation.
-    /// Tags are inferred from headings if not provided.
-    /// Returns an error if the alias already exists.
-    #[tool(description = "Save a markdown document to tome so it can be retrieved later by alias. \
-        Use when the user shares a URL containing useful reference docs (API docs, guides, runbooks, specs), \
-        or when you generate reusable knowledge (summaries, how-tos, design decisions, gotchas). \
-        ALWAYS set category — it controls grouping in the TUI browser (e.g. 'Notes', 'How-To', 'API Docs', \
-        'Runbooks', 'Architecture', 'Terraform Modules'). \
-        Set namespace to the employer name (e.g. 'whiteaway') for work-specific docs; omit for general knowledge. \
-        Tags are inferred from headings if omitted. Errors if alias already exists.")]
+    #[tool(description = "Save markdown as a new doc. Use for useful reference docs from URLs or reusable knowledge you produce. \
+        Always set category; set namespace for work docs. Errors if alias exists (then use tome_update).")]
     async fn tome_add(&self, Parameters(params): Parameters<AddParams>) -> String {
         let alias = params.alias.trim().to_string();
 
@@ -192,10 +188,7 @@ impl TomeServer {
         }
     }
 
-    /// Update metadata fields (category, namespace, tags) on an existing doc.
-    #[tool(description = "Update metadata fields on an existing doc. Pass category, namespace, or tags to change them. \
-        Pass an empty string for category/namespace to clear it. Pass an empty array for tags to clear all tags. \
-        Omit a field entirely to leave it unchanged. Errors if the alias does not exist.")]
+    #[tool(description = "Change category, namespace or tags of an existing doc.")]
     async fn tome_update(&self, Parameters(params): Parameters<UpdateParams>) -> String {
         if !self.db.alias_exists(&params.alias) {
             return format!("Error: no doc with alias '{}' found.", params.alias);
@@ -251,8 +244,7 @@ impl TomeServer {
         }
     }
 
-    /// List the fetch history for a doc alias.
-    #[tool(description = "List the fetch history for a doc alias. Returns version index, timestamp, and content hash for each recorded fetch.")]
+    #[tool(description = "List recorded versions of a remote doc (index, time, hash).")]
     async fn tome_history(&self, Parameters(params): Parameters<HistoryParams>) -> String {
         match self.db.list_versions(&params.alias) {
             Ok(versions) if versions.is_empty() => {
@@ -272,8 +264,7 @@ impl TomeServer {
         }
     }
 
-    /// Show a unified diff between two versions of a doc.
-    #[tool(description = "Show a unified diff between two versions of a doc. v1 and v2 are 1-based version indices from tome_history. Defaults to diffing the last two versions.")]
+    #[tool(description = "Unified diff between two versions from tome_history (default: last two).")]
     async fn tome_diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
         let versions = match self.db.list_versions(&params.alias) {
             Ok(v) => v,
@@ -300,17 +291,13 @@ impl TomeServer {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for TomeServer {
     fn get_info(&self) -> ServerInfo {
         InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "tome gives you access to internal documentation. \
-                 Use tome_list to see available docs, tome_get to fetch a doc by alias, \
-                 tome_search to find relevant docs, tome_add to save new docs (errors if alias exists), \
-                 tome_update to update category/namespace/tags on an existing doc (use this when tome_add \
-                 fails with alias-already-exists, or to fix metadata on a doc you already saved), \
-                 tome_history to see fetch history, and tome_diff to compare versions.",
+                "Personal docs library. tome_search, then tome_get the best alias (use section/offset for long docs). \
+                 Save reusable docs with tome_add; fix metadata with tome_update.",
             )
     }
 }
@@ -371,4 +358,19 @@ fn slugify(s: &str) -> String {
         .filter(|w| !w.is_empty() && w.len() > 1)  // drop single-char words
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_schemas_omit_meta_schema_url() {
+        let server = TomeServer::new(Config::default(), Db::open_in_memory().unwrap());
+        let tools = server.tool_router.list_all();
+        assert_eq!(tools.len(), 7);
+        for t in tools {
+            assert!(!t.input_schema.contains_key("$schema"), "{}", t.name);
+        }
+    }
 }
