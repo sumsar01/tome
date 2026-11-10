@@ -31,7 +31,11 @@ pub fn headings(content: &str) -> Vec<Heading> {
             if (1..=6).contains(&level) && t[level..].starts_with(' ') {
                 let title = t[level..].trim().trim_end_matches('#').trim().to_string();
                 if !title.is_empty() {
-                    out.push(Heading { level, title, start: pos });
+                    out.push(Heading {
+                        level,
+                        title,
+                        start: pos,
+                    });
                 }
             }
         }
@@ -42,7 +46,10 @@ pub fn headings(content: &str) -> Vec<Heading> {
 
 /// First H1 title, if any.
 pub fn title(content: &str) -> Option<String> {
-    headings(content).into_iter().find(|h| h.level == 1).map(|h| h.title)
+    headings(content)
+        .into_iter()
+        .find(|h| h.level == 1)
+        .map(|h| h.title)
 }
 
 /// Extract a section (heading through the next heading of same or higher level).
@@ -69,7 +76,11 @@ pub fn section<'a>(content: &'a str, query: &str) -> Option<(&'a str, String)> {
 /// Compact heading list for navigation hints.
 pub fn outline(content: &str) -> String {
     let hs = headings(content);
-    let max_level = if hs.iter().filter(|h| h.level <= 2).count() >= 3 { 2 } else { 3 };
+    let max_level = if hs.iter().filter(|h| h.level <= 2).count() >= 3 {
+        2
+    } else {
+        3
+    };
     let picked: Vec<&Heading> = hs.iter().filter(|h| h.level <= max_level).collect();
     let mut names: Vec<String> = picked
         .iter()
@@ -115,7 +126,11 @@ pub fn get_view(
 
     let start_b = byte_at(body, offset);
     let rest = &body[start_b..];
-    let window = if max == 0 { rest } else { &rest[..byte_at(rest, max)] };
+    let window = if max == 0 {
+        rest
+    } else {
+        &rest[..byte_at(rest, max)]
+    };
     let window = if window.len() < rest.len() {
         match window.rfind('\n') {
             Some(i) if i > window.len() / 2 => &window[..=i],
@@ -136,17 +151,27 @@ pub fn get_view(
             "\n\n[tome: chars {offset}-{end} of {total}. More: tome_get alias=\"{alias}\"{section_arg} offset={end}"
         ));
         if scope.is_none() {
-            out.push_str(&format!(", or section=\"<heading>\". Sections: {}", outline(body)));
+            out.push_str(&format!(
+                ", or section=\"<heading>\". Sections: {}",
+                outline(body)
+            ));
         }
         out.push(']');
     } else {
-        out.push_str(&format!("\n\n[tome: chars {offset}-{end} of {total}, end of doc]"));
+        out.push_str(&format!(
+            "\n\n[tome: chars {offset}-{end} of {total}, end of doc]"
+        ));
     }
     out
 }
 
 /// Render compact ranked search results, enriched with title and category.
-pub fn search_results(db: &Db, query: &str, results: &[SearchResult], limit: Option<usize>) -> String {
+pub fn search_results(
+    db: &Db,
+    query: &str,
+    results: &[SearchResult],
+    limit: Option<usize>,
+) -> String {
     if results.is_empty() {
         return format!("No results for '{query}'");
     }
@@ -158,7 +183,10 @@ pub fn search_results(db: &Db, query: &str, results: &[SearchResult], limit: Opt
     );
     for (i, r) in results.iter().take(limit).enumerate() {
         let doc = db.find_doc(&r.alias).ok().flatten();
-        let title = doc.as_ref().and_then(|d| d.content.as_deref()).and_then(title);
+        let title = doc
+            .as_ref()
+            .and_then(|d| d.content.as_deref())
+            .and_then(title);
         let category = doc.as_ref().and_then(|d| d.category.clone());
         let snippet = match r.snippet.strip_prefix("content match: ") {
             Some(s) => {
@@ -174,7 +202,10 @@ pub fn search_results(db: &Db, query: &str, results: &[SearchResult], limit: Opt
             "{}. {} | {} | {} | {}\n",
             i + 1,
             r.alias,
-            title.as_deref().map(|t| truncate_chars(t, 80)).unwrap_or_else(|| "-".into()),
+            title
+                .as_deref()
+                .map(|t| truncate_chars(t, 80))
+                .unwrap_or_else(|| "-".into()),
             category.as_deref().unwrap_or("-"),
             r.score
         ));
@@ -211,7 +242,10 @@ fn truncate_chars(s: &str, n: usize) -> String {
 }
 
 fn byte_at(s: &str, chars: usize) -> usize {
-    s.char_indices().nth(chars).map(|(i, _)| i).unwrap_or(s.len())
+    s.char_indices()
+        .nth(chars)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
 }
 
 #[cfg(test)]
@@ -223,7 +257,10 @@ mod tests {
 
     #[test]
     fn headings_skip_code_fences() {
-        let hs: Vec<_> = headings(DOC).into_iter().map(|h| (h.level, h.title)).collect();
+        let hs: Vec<_> = headings(DOC)
+            .into_iter()
+            .map(|h| (h.level, h.title))
+            .collect();
         assert_eq!(
             hs,
             vec![
@@ -269,7 +306,10 @@ mod tests {
 
     #[test]
     fn truncation_adds_continuation_hint() {
-        let doc = format!("# T\n\n## A\n\n{}\n## B\n\nend\n", "line of text\n".repeat(50));
+        let doc = format!(
+            "# T\n\n## A\n\n{}\n## B\n\nend\n",
+            "line of text\n".repeat(50)
+        );
         let out = get_view("d", &doc, None, Some(100), None);
         assert!(out.contains("[tome: chars 0-"));
         assert!(out.contains("offset="));
@@ -278,7 +318,15 @@ mod tests {
         assert!(body.chars().count() <= 100);
         assert!(body.ends_with('\n'));
 
-        let end: usize = out.split("offset=").nth(1).unwrap().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();
+        let end: usize = out
+            .split("offset=")
+            .nth(1)
+            .unwrap()
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
         let next = get_view("d", &doc, None, Some(100_000), Some(end));
         assert!(next.contains("end of doc"));
         assert!(next.contains("end\n"));
@@ -333,7 +381,11 @@ mod tests {
         assert!(out.contains("(+1 more: pass limit)"));
         assert_eq!(search_results(&db, "x", &[], None), "No results for 'x'");
 
-        let fuzzy = [SearchResult { alias: "doc-1".into(), snippet: "[inline] t".into(), score: 5 }];
+        let fuzzy = [SearchResult {
+            alias: "doc-1".into(),
+            snippet: "[inline] t".into(),
+            score: 5,
+        }];
         assert_eq!(
             search_results(&db, "doc", &fuzzy, None),
             "1 of 1 for 'doc' (alias | title | category | score):\n1. doc-1 | Doc 1 | Notes | 5\n"
